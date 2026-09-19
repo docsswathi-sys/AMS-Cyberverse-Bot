@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, CircleAlert, Loader2, ShieldCheck } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleAlert,
+  Loader2,
+  ShieldCheck,
+} from "lucide-react";
 import { useParams } from "react-router-dom";
 import { api } from "../services/api";
 import type { Quiz, QuizQuestion } from "../types/api";
@@ -9,17 +14,14 @@ const DISCORD_ID =
 
 export default function Quiz() {
   const { id } = useParams();
-
   const quizId = Number(id);
 
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-
   const [selectedAnswer, setSelectedAnswer] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
   const [message, setMessage] = useState("");
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
 
@@ -27,6 +29,7 @@ export default function Quiz() {
     async function loadQuiz() {
       try {
         setLoading(true);
+        setMessage("");
 
         const [quizData, questionData] = await Promise.all([
           api.quiz(quizId),
@@ -52,15 +55,11 @@ export default function Quiz() {
   }, [quizId]);
 
   async function handleSubmit() {
-    if (!selectedAnswer || submitting) {
-      return;
-    }
+    if (!selectedAnswer || submitting) return;
 
     const question = questions[currentIndex];
 
-    if (!question) {
-      return;
-    }
+    if (!question) return;
 
     try {
       setSubmitting(true);
@@ -120,7 +119,9 @@ export default function Quiz() {
       <div className="flex min-h-[70vh] items-center justify-center">
         <div className="flex items-center gap-3 text-cyan-300">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm">Loading quiz...</span>
+          <span className="text-sm">
+            Loading quiz...
+          </span>
         </div>
       </div>
     );
@@ -131,6 +132,7 @@ export default function Quiz() {
       <div className="flex min-h-[70vh] items-center justify-center">
         <div className="rounded-2xl border border-red-400/20 bg-red-400/5 p-6 text-center">
           <CircleAlert className="mx-auto mb-3 h-8 w-8 text-red-400" />
+
           <p className="text-sm text-red-300">
             {message || "Quiz not found."}
           </p>
@@ -145,6 +147,7 @@ export default function Quiz() {
     return (
       <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-8 text-center">
         <ShieldCheck className="mx-auto mb-4 h-10 w-10 text-cyan-300" />
+
         <h2 className="text-xl font-semibold text-white">
           No questions available
         </h2>
@@ -153,10 +156,22 @@ export default function Quiz() {
   }
 
   const options = [
-    { key: "A", value: question.option_a },
-    { key: "B", value: question.option_b },
-    { key: "C", value: question.option_c },
-    { key: "D", value: question.option_d },
+    {
+      key: "A",
+      value: question.option_a,
+    },
+    {
+      key: "B",
+      value: question.option_b,
+    },
+    {
+      key: "C",
+      value: question.option_c,
+    },
+    {
+      key: "D",
+      value: question.option_d,
+    },
   ];
 
   return (
@@ -165,6 +180,7 @@ export default function Quiz() {
       <div className="mb-8">
         <div className="mb-3 flex items-center gap-2">
           <ShieldCheck className="h-5 w-5 text-cyan-300" />
+
           <span className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-400">
             Cyber Knowledge Assessment
           </span>
@@ -179,7 +195,7 @@ export default function Quiz() {
         </p>
       </div>
 
-      {/* Progress */}
+      {/* Progress information */}
       <div className="mb-5 flex items-center justify-between">
         <span className="text-xs font-medium text-slate-400">
           Question {currentIndex + 1} / {questions.length}
@@ -195,7 +211,9 @@ export default function Quiz() {
         <div
           className="h-full rounded-full bg-cyan-400 transition-all duration-300"
           style={{
-            width: `${((currentIndex + 1) / questions.length) * 100}%`,
+            width: `${
+              ((currentIndex + 1) / questions.length) * 100
+            }%`,
           }}
         />
       </div>
@@ -206,9 +224,11 @@ export default function Quiz() {
           {question.question}
         </p>
 
+        {/* Options */}
         <div className="space-y-3">
           {options.map((option) => {
-            const selected = selectedAnswer === option.key;
+            const selected =
+              selectedAnswer === option.key;
 
             return (
               <button
@@ -249,7 +269,7 @@ export default function Quiz() {
           })}
         </div>
 
-        {/* Result */}
+        {/* Result message */}
         {message && (
           <div
             className={`mt-6 rounded-xl border p-4 text-sm ${
@@ -262,9 +282,10 @@ export default function Quiz() {
           </div>
         )}
 
-        {/* Actions */}
+        {/* Action */}
         <div className="mt-8 flex justify-end gap-3">
-          {isCorrect && currentIndex < questions.length - 1 ? (
+          {isCorrect &&
+          currentIndex < questions.length - 1 ? (
             <button
               type="button"
               onClick={nextQuestion}
@@ -282,6 +303,7 @@ export default function Quiz() {
               {submitting && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
+
               Submit Answer
             </button>
           )}

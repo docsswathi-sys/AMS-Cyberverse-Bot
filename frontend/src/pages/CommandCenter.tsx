@@ -31,9 +31,9 @@ export default function CommandCenter() {
         setLoading(true);
         setError("");
 
-        const discordId = Number(
-          import.meta.env.VITE_DEV_DISCORD_ID
-        );
+        const discordId = String(
+          import.meta.env.VITE_DEV_DISCORD_ID ?? ""
+        ).trim();
 
         const [activeEvent, challengeData, leaderboardData] =
           await Promise.all([

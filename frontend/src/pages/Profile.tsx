@@ -31,8 +31,9 @@ export default function Profile() {
         }
 
         const response = await api.profile(discordId);
+        setProfile(response);
 
-        setProfile(response.user ?? response);
+        setProfile(response);
       } catch (err) {
         console.error("Failed to load profile:", err);
         setError("Unable to load operator profile.");
@@ -67,7 +68,6 @@ export default function Profile() {
 
   return (
     <div className="min-h-full space-y-8">
-      {/* Header */}
       <section>
         <div className="mb-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-400">
           Operator Intelligence
@@ -83,7 +83,6 @@ export default function Profile() {
         </p>
       </section>
 
-      {/* Loading */}
       {loading && (
         <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-10 text-center">
           <div className="text-sm text-cyan-300">
@@ -92,7 +91,6 @@ export default function Profile() {
         </div>
       )}
 
-      {/* Error */}
       {!loading && error && (
         <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
           <div className="text-sm text-red-300">{error}</div>
@@ -107,10 +105,8 @@ export default function Profile() {
         </div>
       )}
 
-      {/* Profile */}
       {!loading && !error && profile && (
         <>
-          {/* Operator identity */}
           <section className="relative overflow-hidden rounded-2xl border border-cyan-400/20 bg-slate-950/80 p-8 shadow-2xl">
             <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-cyan-400/10 blur-3xl" />
 
@@ -149,17 +145,14 @@ export default function Profile() {
             </div>
           </section>
 
-          {/* Stats */}
           <section className="grid gap-4 md:grid-cols-3">
             <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-6">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
                 Total Points
               </div>
-
               <div className="mt-3 text-3xl font-black text-cyan-300">
                 {profile.points}
               </div>
-
               <div className="mt-1 text-xs text-slate-600">
                 Competitive XP
               </div>
@@ -169,11 +162,9 @@ export default function Profile() {
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
                 Challenges Solved
               </div>
-
               <div className="mt-3 text-3xl font-black text-white">
                 {profile.challenges_solved}
               </div>
-
               <div className="mt-1 text-xs text-slate-600">
                 Verified CTF solves
               </div>
@@ -183,7 +174,6 @@ export default function Profile() {
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
                 Rank
               </div>
-
               <div className="mt-3 text-3xl font-black text-white">
                 {profile.level >= 100
                   ? "GODMODE"
@@ -207,21 +197,18 @@ export default function Profile() {
                                     ? "COMMANDER"
                                     : "OVERLORD"}
               </div>
-
               <div className="mt-1 text-xs text-slate-600">
                 Operator classification
               </div>
             </div>
           </section>
 
-          {/* Progress */}
           <section className="rounded-2xl border border-white/10 bg-slate-950/70 p-6">
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
                   Progression
                 </div>
-
                 <div className="mt-1 text-lg font-semibold text-white">
                   Level {profile.level}
                 </div>
@@ -245,18 +232,15 @@ export default function Profile() {
             </div>
           </section>
 
-          {/* Identity ID */}
           <section className="rounded-2xl border border-white/10 bg-slate-950/50 p-6">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
               Discord Identity
             </div>
-
             <div className="mt-3 break-all font-mono text-sm text-slate-400">
               {String(profile.discord_id)}
             </div>
           </section>
 
-          {/* Navigation */}
           <div className="flex flex-wrap gap-3">
             <Link
               to="/ctf"

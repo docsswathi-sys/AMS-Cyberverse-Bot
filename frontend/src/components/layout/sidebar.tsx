@@ -2,6 +2,7 @@ import {
   Activity,
   Flag,
   CalendarDays,
+  Brain,
   Trophy,
   User,
   Shield,
@@ -23,6 +24,11 @@ const navigation = [
     label: "Events",
     icon: CalendarDays,
     path: "/events",
+  },
+  {
+    label: "Quiz",
+    icon: Brain,
+    path: "/quizzes",
   },
   {
     label: "Leaderboard",
