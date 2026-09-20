@@ -1,4 +1,8 @@
-from database import add_quiz_question, create_quiz
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from database_postgres import add_quiz_question, create_quiz
 
 
 def main():
