@@ -1,754 +1,358 @@
 import os
 
 import discord
-from discord.ext import commands
+from discord import app_commands
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from database_postgres import (
+    activate_event,
     add_challenge,
     create_event,
-    get_active_event,
-    get_challenge,
+    end_event,
     get_challenges,
     get_event,
     get_event_challenges,
-    get_events,
     get_leaderboard,
-    get_level_from_xp,
     get_rank,
     get_rank_emoji,
     get_user,
     get_xp_required,
     register_user,
-    submit_flag,
-    update_event_status,
+    submit_challenge,
 )
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
 
 load_dotenv()
 
+
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = os.getenv("GUILD_ID")
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is missing from .env")
 
-if not GUILD_ID:
-    raise RuntimeError("GUILD_ID is missing from .env")
 
-
-# ============================================================
-# DISCORD BOT
-# ============================================================
+GUILD_ID = 1531533031704100955
 
 intents = discord.Intents.default()
+intents.message_content = True
 
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents,
-)
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
 
 
-# ============================================================
-# HELPERS
-# ============================================================
+def create_progress_bar(points: int, level: int) -> str:
+    if level >= 100:
+        return "██████████"
 
-def create_progress_bar(current_xp, current_level, size=12):
-    current_level_xp = get_xp_required(current_level)
+    current_level_xp = get_xp_required(level)
+    next_level_xp = get_xp_required(level + 1)
 
-    if current_level >= 100:
-        return "█" * size
+    level_range = max(1, next_level_xp - current_level_xp)
+    progress = max(0, points - current_level_xp)
 
-    next_level_xp = get_xp_required(current_level + 1)
-    level_range = next_level_xp - current_level_xp
-    progress = current_xp - current_level_xp
+    percentage = min(1.0, progress / level_range)
 
-    if level_range <= 0:
-        percentage = 1
-    else:
-        percentage = progress / level_range
-
-    percentage = max(0, min(percentage, 1))
-    filled = int(percentage * size)
-    empty = size - filled
+    filled = int(percentage * 10)
+    empty = 10 - filled
 
     return "█" * filled + "░" * empty
 
-
-def is_admin(interaction):
-    return (
-        isinstance(interaction.user, discord.Member)
-        and interaction.user.guild_permissions.administrator
-    )
-
-
-def difficulty_emoji(difficulty):
-    return {
-        "easy": "🟢",
-        "medium": "🟡",
-        "hard": "🟠",
-        "expert": "🔴",
-    }.get(difficulty.lower(), "⚪")
-
-
-def format_event_status(status):
-    return {
-        "draft": "📝 DRAFT",
-        "active": "🟢 ACTIVE",
-        "ended": "🔴 ENDED",
-    }.get(status, status.upper())
-
-
-# ============================================================
-# BOT READY
-# ============================================================
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
-    guild = discord.Object(id=int(GUILD_ID))
+    guild = discord.Object(id=GUILD_ID)
 
-    bot.tree.copy_global_to(guild=guild)
-
-    synced = await bot.tree.sync(guild=guild)
-
-    print(
-        f"Synced {len(synced)} slash command(s) "
-        "to AMS Cyberverse"
-    )
+    try:
+        synced = await tree.sync(guild=guild)
+        print(f"Synced {len(synced)} slash command(s) to AMS Cyberverse")
+    except discord.HTTPException as error:
+        print(f"Failed to sync commands: {error}")
 
 
 # ============================================================
-# /ping
+# PING
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="ping",
-    description="Check whether AMS Cyberverse Bot is online",
+    description="Check whether the AMS Cyberverse bot is online",
+    guild=discord.Object(id=GUILD_ID),
 )
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(
-        "🏓 AMS Cyberverse Bot is online!"
+        "🛡️ AMS Cyberverse Bot is online!"
     )
 
 
 # ============================================================
-# /event
+# EVENT
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="event",
-    description="View the active AMS Cyberverse CTF event",
+    description="View an AMS Cyberverse event",
+    guild=discord.Object(id=GUILD_ID),
 )
-async def event(interaction: discord.Interaction):
-    active_event = get_active_event()
+async def event(
+    interaction: discord.Interaction,
+    event_id: int,
+):
+    event_data = get_event(event_id)
 
-    if active_event is None:
+    if event_data is None:
         await interaction.response.send_message(
-            "📭 There is no active CTF event right now."
+            "❌ Event not found.",
+            ephemeral=True,
         )
         return
 
-    challenge_count = len(
-        get_event_challenges(
-            event_id=active_event["id"],
-            active_only=True,
-        )
-    )
-
     embed = discord.Embed(
-        title="⚡ ACTIVE CTF EVENT",
-        description=(
-            active_event["description"]
-            or "AMS Cyberverse CTF"
-        ),
+        title=f"🎯 {event_data['name']}",
+        description=event_data["description"],
     )
 
     embed.add_field(
-        name="🆔 Event ID",
-        value=f"**#{active_event['id']}**",
+        name="STATUS",
+        value=str(event_data["status"]),
         inline=True,
     )
 
     embed.add_field(
-        name="🏆 Event",
-        value=f"**{active_event['name']}**",
+        name="EVENT ID",
+        value=str(event_data["id"]),
         inline=True,
-    )
-
-    embed.add_field(
-        name="🎯 Challenges",
-        value=f"**{challenge_count}**",
-        inline=True,
-    )
-
-    if active_event["start_at"]:
-        embed.add_field(
-            name="🕐 Starts",
-            value=active_event["start_at"],
-            inline=True,
-        )
-
-    if active_event["end_at"]:
-        embed.add_field(
-            name="🕐 Ends",
-            value=active_event["end_at"],
-            inline=True,
-        )
-
-    embed.set_footer(
-        text="Use /challenges to enter the CTF Arena."
     )
 
     await interaction.response.send_message(embed=embed)
 
 
 # ============================================================
-# /events
+# EVENTS
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="events",
-    description="View AMS Cyberverse CTF events",
+    description="View AMS Cyberverse events",
+    guild=discord.Object(id=GUILD_ID),
 )
 async def events(interaction: discord.Interaction):
-    event_list = get_events()
-
-    if not event_list:
-        await interaction.response.send_message(
-            "📭 No CTF events have been created yet."
-        )
-        return
-
-    embed = discord.Embed(
-        title="📚 AMS CYBERVERSE • CTF EVENTS",
-        description="All CTF events currently stored in the platform.",
+    await interaction.response.send_message(
+        "📋 Event listing is available through the AMS Cyberverse dashboard."
     )
 
-    for current_event in event_list[:20]:
-        challenge_count = len(
-            get_event_challenges(
-                event_id=current_event["id"],
-                active_only=False,
-            )
-        )
-
-        embed.add_field(
-            name=(
-                f"#{current_event['id']} • "
-                f"{current_event['name']}"
-            ),
-            value=(
-                f"**Status:** "
-                f"{format_event_status(current_event['status'])}\n"
-                f"**Challenges:** {challenge_count}\n"
-                f"{current_event['description'] or 'No description'}"
-            ),
-            inline=False,
-        )
-
-    if len(event_list) > 20:
-        embed.set_footer(
-            text="Showing the latest 20 events."
-        )
-
-    await interaction.response.send_message(embed=embed)
-
 
 # ============================================================
-# /createevent
+# CREATE EVENT
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="createevent",
-    description="Create a new AMS Cyberverse CTF event",
+    description="Create a new AMS Cyberverse event",
+    guild=discord.Object(id=GUILD_ID),
 )
-@discord.app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def createevent(
     interaction: discord.Interaction,
     name: str,
-    description: str = "",
+    description: str,
 ):
-    if not is_admin(interaction):
-        await interaction.response.send_message(
-            "⛔ You need Administrator permission to create events.",
-            ephemeral=True,
-        )
-        return
-
-    name = name.strip()
-    description = description.strip()
-
-    if not name:
-        await interaction.response.send_message(
-            "❌ Event name cannot be empty.",
-            ephemeral=True,
-        )
-        return
-
-    try:
-        event_id = create_event(
-            name=name,
-            description=description,
-            status="draft",
-        )
-    except ValueError as error:
-        await interaction.response.send_message(
-            f"❌ Could not create event: {error}",
-            ephemeral=True,
-        )
-        return
-
-    embed = discord.Embed(
-        title="✅ CTF EVENT CREATED",
-        description=(
-            "The event has been created as a **DRAFT**.\n"
-            "Activate it when you are ready."
-        ),
-    )
-
-    embed.add_field(
-        name="🆔 Event ID",
-        value=f"**#{event_id}**",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="🏆 Event",
-        value=f"**{name}**",
-        inline=True,
-    )
-
-    embed.add_field(
-        name="📌 Status",
-        value="📝 **DRAFT**",
-        inline=True,
+    event_id = create_event(
+        name=name,
+        description=description,
     )
 
     await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True,
+        f"✅ Event created successfully.\n\n"
+        f"🎯 **{name}**\n"
+        f"📝 {description}\n"
+        f"🆔 Event ID: **{event_id}**\n"
+        f"📌 Status: **DRAFT**"
     )
 
 
 # ============================================================
-# /activateevent
+# ACTIVATE EVENT
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="activateevent",
-    description="Activate a CTF event",
+    description="Activate an AMS Cyberverse event",
+    guild=discord.Object(id=GUILD_ID),
 )
-@discord.app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def activateevent(
     interaction: discord.Interaction,
     event_id: int,
 ):
-    if not is_admin(interaction):
-        await interaction.response.send_message(
-            "⛔ You need Administrator permission to activate events.",
-            ephemeral=True,
-        )
-        return
+    event_data = get_event(event_id)
 
-    target_event = get_event(event_id)
-
-    if target_event is None:
+    if event_data is None:
         await interaction.response.send_message(
             "❌ Event not found.",
             ephemeral=True,
         )
         return
 
-    if target_event["status"] == "active":
-        await interaction.response.send_message(
-            f"ℹ️ **{target_event['name']}** is already active.",
-            ephemeral=True,
-        )
-        return
-
-    try:
-        updated = update_event_status(
-            event_id=event_id,
-            status="active",
-        )
-    except ValueError as error:
-        await interaction.response.send_message(
-            f"❌ Could not activate event: {error}",
-            ephemeral=True,
-        )
-        return
-
-    if not updated:
-        await interaction.response.send_message(
-            "❌ Event could not be activated.",
-            ephemeral=True,
-        )
-        return
+    activate_event(event_id)
 
     await interaction.response.send_message(
-        f"🟢 **{target_event['name']}** is now the active CTF event.\n"
-        "Any previously active event has been ended.",
-        ephemeral=True,
+        f"🟢 Event **{event_data['name']}** is now ACTIVE!"
     )
 
 
 # ============================================================
-# /endevent
+# END EVENT
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="endevent",
-    description="End an active AMS Cyberverse CTF event",
+    description="End an AMS Cyberverse event",
+    guild=discord.Object(id=GUILD_ID),
 )
-@discord.app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def endevent(
     interaction: discord.Interaction,
     event_id: int,
 ):
-    if not is_admin(interaction):
-        await interaction.response.send_message(
-            "⛔ You need Administrator permission to end events.",
-            ephemeral=True,
-        )
-        return
+    event_data = get_event(event_id)
 
-    target_event = get_event(event_id)
-
-    if target_event is None:
+    if event_data is None:
         await interaction.response.send_message(
             "❌ Event not found.",
             ephemeral=True,
         )
         return
 
-    if target_event["status"] == "ended":
-        await interaction.response.send_message(
-            f"ℹ️ **{target_event['name']}** is already ended.",
-            ephemeral=True,
-        )
-        return
-
-    try:
-        updated = update_event_status(
-            event_id=event_id,
-            status="ended",
-        )
-    except ValueError as error:
-        await interaction.response.send_message(
-            f"❌ Could not end event: {error}",
-            ephemeral=True,
-        )
-        return
-
-    if not updated:
-        await interaction.response.send_message(
-            "❌ Event could not be ended.",
-            ephemeral=True,
-        )
-        return
+    end_event(event_id)
 
     await interaction.response.send_message(
-        f"🔴 **{target_event['name']}** has been ended.",
-        ephemeral=True,
+        f"🔴 Event **{event_data['name']}** has ended."
     )
 
 
 # ============================================================
-# /eventchallenges
+# EVENT CHALLENGES
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="eventchallenges",
-    description="View challenges belonging to a specific CTF event",
+    description="View challenges belonging to an event",
+    guild=discord.Object(id=GUILD_ID),
 )
 async def eventchallenges(
     interaction: discord.Interaction,
     event_id: int,
 ):
-    target_event = get_event(event_id)
+    challenges = get_event_challenges(event_id)
 
-    if target_event is None:
+    if not challenges:
         await interaction.response.send_message(
-            "❌ Event not found.",
-            ephemeral=True,
-        )
-        return
-
-    challenge_list = get_event_challenges(
-        event_id=event_id,
-        active_only=False,
-    )
-
-    if not challenge_list:
-        await interaction.response.send_message(
-            f"📭 **{target_event['name']}** has no challenges.",
+            "📭 No challenges have been added to this event yet.",
             ephemeral=True,
         )
         return
 
     embed = discord.Embed(
-        title="🎯 EVENT CHALLENGES",
-        description=(
-            f"**Event:** {target_event['name']}\n"
-            f"**Status:** {format_event_status(target_event['status'])}"
-        ),
+        title=f"🎯 Event {event_id} Challenges",
+        description="Available cybersecurity challenges",
     )
 
-    for challenge in challenge_list[:25]:
-        status = "🟢 Active" if challenge["is_active"] else "🔒 Inactive"
-
+    for challenge in challenges:
         embed.add_field(
-            name=(
-                f"#{challenge['id']} • "
-                f"{challenge['name']}"
-            ),
+            name=challenge["name"],
             value=(
-                f"{difficulty_emoji(challenge['difficulty'])} "
-                f"**{challenge['difficulty'].upper()}**\n"
-                f"📂 {challenge['category']} • "
-                f"🏆 {challenge['points']} XP\n"
-                f"{status}\n"
-                f"{challenge['description']}"
+                f"{challenge['description']}\n"
+                f"💰 **{challenge['points']} points**\n"
+                f"🏷️ {challenge['category']}"
             ),
             inline=False,
-        )
-
-    if len(challenge_list) > 25:
-        embed.set_footer(
-            text="Showing the first 25 challenges."
-        )
-
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True,
-    )
-
-
-# ============================================================
-# /challenges
-# ============================================================
-
-@bot.tree.command(
-    name="challenges",
-    description="View available AMS Cyberverse CTF challenges",
-)
-async def challenges(interaction: discord.Interaction):
-    active_event = get_active_event()
-
-    if active_event is None:
-        await interaction.response.send_message(
-            "📭 No active CTF event is running right now."
-        )
-        return
-
-    challenge_list = get_challenges(
-        event_id=active_event["id"],
-        active_only=True,
-    )
-
-    if not challenge_list:
-        await interaction.response.send_message(
-            f"📭 **{active_event['name']}** has no active challenges yet."
-        )
-        return
-
-    embed = discord.Embed(
-        title="🏆 AMS CYBERVERSE • CTF ARENA",
-        description=(
-            f"**Event:** {active_event['name']}\n"
-            "Choose a challenge and start hacking."
-        ),
-    )
-
-    for challenge in challenge_list[:25]:
-        embed.add_field(
-            name=(
-                f"#{challenge['id']} • "
-                f"{challenge['name']}"
-            ),
-            value=(
-                f"{difficulty_emoji(challenge['difficulty'])} "
-                f"**{challenge['difficulty'].upper()}**\n"
-                f"**Category:** {challenge['category']}\n"
-                f"**Points:** {challenge['points']}\n"
-                f"{challenge['description']}"
-            ),
-            inline=False,
-        )
-
-    if len(challenge_list) > 25:
-        embed.set_footer(
-            text="Showing the first 25 active challenges."
         )
 
     await interaction.response.send_message(embed=embed)
 
 
 # ============================================================
-# /addchallenge
+# CHALLENGES
 # ============================================================
 
-@bot.tree.command(
-    name="addchallenge",
-    description="Add a new AMS Cyberverse CTF challenge",
+@tree.command(
+    name="challenges",
+    description="View available cybersecurity challenges",
+    guild=discord.Object(id=GUILD_ID),
 )
-@discord.app_commands.default_permissions(administrator=True)
-async def addchallenge(
-    interaction: discord.Interaction,
-    name: str,
-    description: str,
-    category: str,
-    points: int,
-    flag: str,
-    difficulty: str = "medium",
-):
-    if not is_admin(interaction):
+async def challenges(interaction: discord.Interaction):
+    challenge_list = get_challenges()
+
+    if not challenge_list:
         await interaction.response.send_message(
-            "⛔ You need Administrator permission to add challenges.",
-            ephemeral=True,
-        )
-        return
-
-    active_event = get_active_event()
-
-    if active_event is None:
-        await interaction.response.send_message(
-            "❌ There is no active CTF event.\n"
-            "Create an event with /createevent and activate it "
-            "with /activateevent first.",
-            ephemeral=True,
-        )
-        return
-
-    name = name.strip()
-    description = description.strip()
-    category = category.strip()
-    flag = flag.strip()
-    difficulty = difficulty.strip().lower()
-
-    if not name:
-        await interaction.response.send_message(
-            "❌ Challenge name cannot be empty.",
-            ephemeral=True,
-        )
-        return
-
-    if not description:
-        await interaction.response.send_message(
-            "❌ Challenge description cannot be empty.",
-            ephemeral=True,
-        )
-        return
-
-    if not category:
-        await interaction.response.send_message(
-            "❌ Challenge category cannot be empty.",
-            ephemeral=True,
-        )
-        return
-
-    if not flag:
-        await interaction.response.send_message(
-            "❌ Flag cannot be empty.",
-            ephemeral=True,
-        )
-        return
-
-    if points <= 0:
-        await interaction.response.send_message(
-            "❌ Points must be greater than 0.",
-            ephemeral=True,
-        )
-        return
-
-    if difficulty not in {"easy", "medium", "hard", "expert"}:
-        await interaction.response.send_message(
-            "❌ Difficulty must be: easy, medium, hard, or expert.",
-            ephemeral=True,
-        )
-        return
-
-    try:
-        challenge_id = add_challenge(
-            name=name,
-            description=description,
-            flag=flag,
-            points=points,
-            category=category,
-            event_id=active_event["id"],
-            difficulty=difficulty,
-        )
-    except ValueError as error:
-        print(f"[ERROR] Could not create challenge: {error}")
-
-        await interaction.response.send_message(
-            f"❌ Could not create the challenge: {error}",
+            "📭 No challenges are available yet.",
             ephemeral=True,
         )
         return
 
     embed = discord.Embed(
-        title="✅ CHALLENGE CREATED",
-        description=(
-            f"A new challenge has been added to "
-            f"**{active_event['name']}**."
-        ),
+        title="⚔️ AMS CYBERVERSE CHALLENGES",
+        description="Available cybersecurity challenges",
     )
 
-    embed.add_field(
-        name="🆔 Challenge ID",
-        value=f"**#{challenge_id}**",
-        inline=True,
-    )
+    for challenge in challenge_list:
+        embed.add_field(
+            name=f"#{challenge['id']} — {challenge['name']}",
+            value=(
+                f"{challenge['description']}\n"
+                f"💰 **{challenge['points']} points**\n"
+                f"🏷️ {challenge['category']}"
+            ),
+            inline=False,
+        )
 
-    embed.add_field(
-        name="🏆 XP",
-        value=f"**{points} XP**",
-        inline=True,
-    )
+    await interaction.response.send_message(embed=embed)
 
-    embed.add_field(
-        name="📂 Category",
-        value=f"**{category}**",
-        inline=True,
-    )
 
-    embed.add_field(
-        name="⚔️ Difficulty",
-        value=f"**{difficulty.upper()}**",
-        inline=True,
-    )
+# ============================================================
+# ADD CHALLENGE
+# ============================================================
 
-    embed.add_field(
-        name="🎯 Challenge",
-        value=f"**{name}**\n{description}",
-        inline=False,
-    )
-
-    embed.set_footer(
-        text="Members can find this challenge using /challenges."
+@tree.command(
+    name="addchallenge",
+    description="Add a cybersecurity challenge",
+    guild=discord.Object(id=GUILD_ID),
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def addchallenge(
+    interaction: discord.Interaction,
+    name: str,
+    description: str,
+    flag: str,
+    points: int,
+    category: str,
+):
+    challenge_id = add_challenge(
+        name=name,
+        description=description,
+        flag=flag,
+        points=points,
+        category=category,
     )
 
     await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True,
+        f"✅ Challenge created!\n\n"
+        f"🆔 Challenge ID: **{challenge_id}**\n"
+        f"⚔️ **{name}**\n"
+        f"💰 **{points} points**\n"
+        f"🏷️ **{category}**"
     )
 
 
 # ============================================================
-# /submit
+# SUBMIT CHALLENGE
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="submit",
-    description="Submit a flag for an AMS Cyberverse challenge",
+    description="Submit a flag for a cybersecurity challenge",
+    guild=discord.Object(id=GUILD_ID),
 )
 async def submit(
     interaction: discord.Interaction,
@@ -761,73 +365,29 @@ async def submit(
         interaction.user.display_name,
     )
 
-    challenge = get_challenge(challenge_id)
+    result = submit_challenge(
+        interaction.user.id,
+        challenge_id,
+        flag,
+    )
 
-    if challenge is None:
+    if result is None:
         await interaction.response.send_message(
             "❌ Challenge not found.",
             ephemeral=True,
         )
         return
 
-    if not challenge["is_active"]:
+    if result["status"] == "already_solved":
         await interaction.response.send_message(
-            "🔒 This challenge is currently inactive.",
+            "⚠️ You have already solved this challenge.",
             ephemeral=True,
         )
         return
 
-    active_event = get_active_event()
-
-    if active_event is None:
+    if result["status"] == "incorrect":
         await interaction.response.send_message(
-            "📭 There is no active CTF event right now.",
-            ephemeral=True,
-        )
-        return
-
-    if challenge["event_id"] != active_event["id"]:
-        await interaction.response.send_message(
-            "🔒 This challenge does not belong to the active CTF event.",
-            ephemeral=True,
-        )
-        return
-
-    old_user = get_user(interaction.user.id)
-
-    old_points = (
-        old_user["points"]
-        if old_user is not None
-        else 0
-    )
-
-    old_level = get_level_from_xp(old_points)
-
-    result = submit_flag(
-        interaction.user.id,
-        challenge_id,
-        flag,
-    )
-
-    status = result["status"]
-
-    if status == "incorrect":
-        await interaction.response.send_message(
-            "❌ **Incorrect flag.** Keep investigating!",
-            ephemeral=True,
-        )
-        return
-
-    if status == "already_solved":
-        await interaction.response.send_message(
-            "⚠️ You have already solved this challenge!",
-            ephemeral=True,
-        )
-        return
-
-    if status != "correct":
-        await interaction.response.send_message(
-            "❌ Submission could not be processed.",
+            "❌ Incorrect flag. Keep hunting.",
             ephemeral=True,
         )
         return
@@ -836,50 +396,30 @@ async def submit(
 
     if user is None:
         await interaction.response.send_message(
-            "❌ Could not load your updated profile.",
+            "⚠️ Challenge solved, but profile could not be loaded.",
             ephemeral=True,
         )
         return
 
-    total_points = user["points"]
-    new_level = user["level"]
-    solved_count = user["challenges_solved"]
-
-    rank = get_rank(new_level)
-    rank_emoji = get_rank_emoji(new_level)
-
-    level_up_message = ""
-
-    if new_level > old_level:
-        level_up_message = (
-            "\n\n🎉 **LEVEL UP!**\n"
-            f"⚔️ Level **{new_level}**\n"
-            f"{rank_emoji} **{rank}**"
-        )
-
     await interaction.response.send_message(
-        f"✅ **Correct Flag!**\n"
-        f"🏆 Challenge: **{result['name']}**\n"
-        f"🎯 **+{result['points']} XP**\n"
-        f"💎 Total XP: **{total_points}**\n"
-        f"⚔️ Level: **{new_level}**\n"
-        f"{rank_emoji} Rank: **{rank}**\n"
-        f"🔓 Challenges Solved: **{solved_count}**"
-        f"{level_up_message}",
-        ephemeral=True,
+        f"🏆 **Challenge Solved!**\n\n"
+        f"⚔️ Challenge: **{result['challenge_name']}**\n"
+        f"💰 Points earned: **+{result['points']}**\n"
+        f"📈 Total XP: **{user['points']}**\n"
+        f"🔥 Level: **{user['level']}**"
     )
 
 
 # ============================================================
-# /profile
+# PROFILE
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="profile",
     description="View your AMS Cyberverse profile",
+    guild=discord.Object(id=GUILD_ID),
 )
 async def profile(interaction: discord.Interaction):
-    
     register_user(
         interaction.user.id,
         interaction.user.name,
@@ -895,15 +435,11 @@ async def profile(interaction: discord.Interaction):
         )
         return
 
-    (
-        _discord_id,
-        username,
-        display_name,
-        points,
-        level,
-        challenges_solved,
-        _joined_at,
-    ) = user
+    username = user["username"]
+    display_name = user["display_name"]
+    points = user["points"]
+    level = user["level"]
+    challenges_solved = user["challenges_solved"]
 
     rank = get_rank(level)
     rank_emoji = get_rank_emoji(level)
@@ -977,39 +513,37 @@ async def profile(interaction: discord.Interaction):
 
 
 # ============================================================
-# /leaderboard
+# LEADERBOARD
 # ============================================================
 
-@bot.tree.command(
+@tree.command(
     name="leaderboard",
-    description="View the top AMS Cyberverse hackers",
+    description="View the AMS Cyberverse leaderboard",
+    guild=discord.Object(id=GUILD_ID),
 )
 async def leaderboard(interaction: discord.Interaction):
-    leaderboard_data = get_leaderboard(limit=10)
+    users = get_leaderboard()
 
-    if not leaderboard_data:
+    if not users:
         await interaction.response.send_message(
-            "📭 The leaderboard is empty. "
-            "Be the first hacker to solve a challenge!"
+            "📭 No players are registered yet.",
+            ephemeral=True,
         )
         return
 
     embed = discord.Embed(
         title="🏆 AMS CYBERVERSE LEADERBOARD",
-        description="Top 10 hackers ranked by all-time XP",
+        description="Top cybersecurity warriors",
     )
 
+    lines = []
     medals = ["🥇", "🥈", "🥉"]
 
-    for index, user in enumerate(leaderboard_data, start=1):
-        (
-            _discord_id,
-            _username,
-            display_name,
-            points,
-            level,
-            challenges_solved,
-        ) = user
+    for index, user in enumerate(users, start=1):
+        display_name = user["display_name"]
+        points = user["points"]
+        level = user["level"]
+        challenges_solved = user["challenges_solved"]
 
         rank_number = (
             medals[index - 1]
@@ -1020,22 +554,48 @@ async def leaderboard(interaction: discord.Interaction):
         rank = get_rank(level)
         rank_emoji = get_rank_emoji(level)
 
-        embed.add_field(
-            name=f"{rank_number}  {display_name}",
-            value=(
-                f"🏆 **{points:,} XP**  •  "
-                f"⚔️ Level **{level}**\n"
-                f"{rank_emoji} **{rank}**  •  "
-                f"🎯 {challenges_solved} challenges"
-            ),
-            inline=False,
+        lines.append(
+            f"{rank_number}  **{display_name}**\n"
+            f"   🏆 **{points:,} XP**  •  "
+            f"⚔️ Level **{level}**\n"
+            f"   {rank_emoji} **{rank}**  •  "
+            f"🎯 {challenges_solved} challenges"
         )
+
+    embed.description = "\n\n".join(lines)
 
     embed.set_footer(
         text="AMS Cyberverse • Keep hacking. Keep climbing."
     )
 
     await interaction.response.send_message(embed=embed)
+
+
+# ============================================================
+# ERROR HANDLER
+# ============================================================
+
+@tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError,
+):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        message = "⛔ You do not have permission to use this command."
+    else:
+        print(f"Command error: {error}")
+        message = "❌ Something went wrong while processing the command."
+
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            message,
+            ephemeral=True,
+        )
+    else:
+        await interaction.response.send_message(
+            message,
+            ephemeral=True,
+        )
 
 
 # ============================================================
