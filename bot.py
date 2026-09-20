@@ -4,7 +4,9 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from database import (
+load_dotenv()
+
+from database_postgres import (
     add_challenge,
     create_event,
     get_active_event,
