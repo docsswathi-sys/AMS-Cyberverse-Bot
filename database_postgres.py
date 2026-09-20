@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import psycopg
 from psycopg.rows import dict_row
@@ -24,7 +24,7 @@ def get_connection():
 # ============================================================
 
 def utc_now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def hash_flag(flag):
