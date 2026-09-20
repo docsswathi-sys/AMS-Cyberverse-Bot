@@ -22,7 +22,7 @@ from backend.services import (
     submit_challenge_flag,
     submit_quiz_question,
 )
-from database import register_user
+from database_postgres import register_user
 
 app = FastAPI(
     title="AMS Cyberverse API",

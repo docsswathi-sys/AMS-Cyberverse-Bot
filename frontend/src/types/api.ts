@@ -26,7 +26,8 @@ export interface Challenge {
 }
 
 export interface UserProfile {
-  discord_id: number;
+  user: UserProfile;
+  discord_id: string;
   username: string;
   display_name: string;
   points: number;
@@ -38,7 +39,7 @@ export interface UserProfile {
 }
 
 export interface LeaderboardEntry {
-  discord_id: number;
+  discord_id: string;
   username: string;
   display_name: string;
   points: number;
@@ -101,7 +102,7 @@ export interface QuizQuestionsResponse {
 export interface QuizAnswerResponse {
   status: string;
   question_id?: number;
-  discord_id?: number;
+  discord_id?: string;
   quiz_id?: number;
   selected_answer?: string;
   is_correct?: boolean;

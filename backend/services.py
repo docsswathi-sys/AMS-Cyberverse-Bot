@@ -1,4 +1,4 @@
-from database import (
+from database_postgres import (
     get_active_event,
     get_challenge,
     get_challenges,
@@ -23,7 +23,7 @@ from database import (
 
 def row_to_dict(row):
     """
-    Convert a sqlite3.Row into a normal Python dictionary.
+    Convert a database row into a normal Python dictionary.
     """
     if row is None:
         return None
@@ -105,7 +105,7 @@ def get_event_challenge_data(event_id, active_only=True):
 
 def submit_challenge_flag(discord_id, challenge_id, flag):
     """
-    Submit a CTF flag through the database service.
+    Submit a CTF flag through the PostgreSQL database service.
     """
     return submit_flag(
         discord_id=discord_id,
@@ -257,9 +257,6 @@ def submit_quiz_question(
 
     # --------------------------------------------------------
     # Make sure the Discord user exists.
-    #
-    # This prevents the previous SQLite FOREIGN KEY error
-    # from happening silently.
     # --------------------------------------------------------
 
     user = get_user(discord_id)
@@ -279,9 +276,7 @@ def submit_quiz_question(
         }
 
     # --------------------------------------------------------
-    # Log the exact values entering the database layer.
-    # This is temporary diagnostic protection and can be
-    # removed after the web flow is confirmed.
+    # Temporary diagnostic logging.
     # --------------------------------------------------------
 
     print(
@@ -292,7 +287,7 @@ def submit_quiz_question(
     )
 
     # --------------------------------------------------------
-    # Submit to the database.
+    # Submit to PostgreSQL database layer.
     # --------------------------------------------------------
 
     return submit_quiz_answer(

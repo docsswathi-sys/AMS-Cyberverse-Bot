@@ -1,24 +1,20 @@
 import hashlib
 import hmac
 import os
-import shutil
 from datetime import datetime, timezone
-from pathlib import Path
 
 import psycopg
 from psycopg.rows import dict_row
 
-DB_NAME = os.getenv("AMS_DB_NAME", "ams_cyberverse.db")
-
-DB_PATH = Path(DB_NAME)
-
-if not DB_PATH.is_absolute():
-    DB_PATH = Path(__file__).resolve().parent / DB_PATH
-
 
 def get_connection():
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not configured.")
+
     return psycopg.connect(
-        os.getenv("DATABASE_URL"),
+        database_url,
         row_factory=dict_row,
     )
 
@@ -115,52 +111,16 @@ def get_rank_emoji(level):
 
 
 # ============================================================
-# DATABASE CONNECTION
-# ============================================================
-
-
-
-# ============================================================
 # MIGRATION HELPERS
 # ============================================================
 
-def _table_exists(cursor, table_name):
-    cursor.execute(
-        """
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = current_schema()
-          AND table_name = %s
-        """,
-        (table_name,),
-    )
-    return cursor.fetchone() is not None
+def _migrate_legacy_database(connection):
+    """Legacy SQLite migration is intentionally disabled for PostgreSQL.
 
-
-def _column_names(cursor, table_name):
-    cursor.execute(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = %s
-        """,
-        (table_name,),
-    )
-    return {row["column_name"] for row in cursor.fetchall()}
-
-
-def _backup_database():
-    if not DB_PATH.exists():
-        return None
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    backup_path = DB_PATH.with_name(
-        f"{DB_PATH.stem}_backup_{timestamp}{DB_PATH.suffix}"
-    )
-
-    shutil.copy2(DB_PATH, backup_path)
-    return backup_path
+    Production data lives in Neon PostgreSQL. The old SQLite database is
+    kept separately as a local backup and is never inspected by this module.
+    """
+    return
 
 
 # ============================================================
@@ -366,258 +326,10 @@ def _create_schema(cursor):
     )
 
 
-# ============================================================
-# LEGACY DATABASE MIGRATION
-# ============================================================
-
-def _migrate_legacy_database(connection):
-    cursor = connection.cursor()
-
-    has_old_challenges = _table_exists(cursor, "challenges")
-    has_old_users = _table_exists(cursor, "users")
-    has_old_submissions = _table_exists(cursor, "submissions")
-
-    if not (has_old_challenges or has_old_users or has_old_submissions):
-        return
-
-    # New schema is already present.
-    if (
-        _table_exists(cursor, "events")
-        and "flag_hash" in _column_names(cursor, "challenges")
-        and _table_exists(cursor, "attempts")
-        and _table_exists(cursor, "solves")
-    ):
-        return
-
-    backup_path = _backup_database()
-
-    if backup_path:
-        print(f"[DB] Legacy database backup created: {backup_path}")
-
-    if has_old_challenges:
-        cursor.execute("ALTER TABLE challenges RENAME TO legacy_challenges")
-
-    if has_old_users:
-        cursor.execute("ALTER TABLE users RENAME TO legacy_users")
-
-    if has_old_submissions:
-        cursor.execute("ALTER TABLE submissions RENAME TO legacy_submissions")
-
-    _create_schema(cursor)
-
-    now = utc_now()
-
-    cursor.execute(
-        """
-        INSERT INTO events
-        (id, name, description, status, created_at)
-        VALUES (
-            1,
-            'Legacy CTF',
-            'Migrated challenges from the original AMS Cyberverse database.',
-            'active',
-            %s
-        )
-        ON CONFLICT DO NOTHING
-        """,
-        (now,),
-    )
-
-    # --------------------------------------------------------
-    # USERS
-    # --------------------------------------------------------
-
-    if has_old_users:
-        cursor.execute(
-            """
-            SELECT
-                discord_id,
-                username,
-                display_name,
-                points,
-                level,
-                challenges_solved,
-                joined_at
-            FROM legacy_users
-            """
-        )
-
-        for row in cursor.fetchall():
-            cursor.execute(
-                """
-                INSERT INTO users
-                (
-                    discord_id,
-                    username,
-                    display_name,
-                    points,
-                    level,
-                    challenges_solved,
-                    joined_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT DO NOTHING
-        """,
-                (
-                    row["discord_id"],
-                    row["username"],
-                    row["display_name"],
-                    row["points"] or 0,
-                    max(1, min(MAX_LEVEL, row["level"] or 1)),
-                    row["challenges_solved"] or 0,
-                    row["joined_at"] or now,
-                ),
-            )
-
-    # --------------------------------------------------------
-    # CHALLENGES
-    # --------------------------------------------------------
-
-    if has_old_challenges:
-        cursor.execute(
-            """
-            SELECT
-                id,
-                name,
-                description,
-                flag,
-                points,
-                category
-            FROM legacy_challenges
-            ORDER BY id
-            """
-        )
-
-        for row in cursor.fetchall():
-            cursor.execute(
-                """
-                INSERT INTO challenges
-                (
-                    id,
-                    event_id,
-                    name,
-                    description,
-                    flag_hash,
-                    points,
-                    category,
-                    difficulty,
-                    is_active,
-                    created_at
-                )
-                VALUES (%s, 1, %s, %s, %s, %s, %s, 'medium', 1, %s)
-                """,
-                (
-                    row["id"],
-                    row["name"],
-                    row["description"],
-                    hash_flag(row["flag"]),
-                    row["points"],
-                    row["category"],
-                    now,
-                ),
-            )
-
-    # --------------------------------------------------------
-    # OLD SUCCESSFUL SUBMISSIONS -> SOLVES
-    # --------------------------------------------------------
-
-    if has_old_submissions:
-        cursor.execute(
-            """
-            SELECT
-                discord_id,
-                challenge_id,
-                submitted_at
-            FROM legacy_submissions
-            """
-        )
-
-        for row in cursor.fetchall():
-            cursor.execute(
-                """
-                SELECT event_id, points
-                FROM challenges
-                WHERE id=%s
-                """,
-                (row["challenge_id"],),
-            )
-
-            challenge = cursor.fetchone()
-
-            if challenge is None:
-                continue
-
-            cursor.execute(
-                """
-                INSERT INTO solves
-                (
-                    discord_id,
-                    challenge_id,
-                    event_id,
-                    points_awarded,
-                    solved_at
-                )
-                VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT DO NOTHING
-        """,
-                (
-                    row["discord_id"],
-                    row["challenge_id"],
-                    challenge["event_id"],
-                    challenge["points"],
-                    row["submitted_at"] or now,
-                ),
-            )
-
-    # Recalculate all-time stats from actual solves.
-    cursor.execute(
-        """
-        UPDATE users
-        SET
-            challenges_solved = (
-                SELECT COUNT(*)
-                FROM solves
-                WHERE solves.discord_id = users.discord_id
-            ),
-            points = (
-                SELECT COALESCE(SUM(points_awarded), 0)
-                FROM solves
-                WHERE solves.discord_id = users.discord_id
-            )
-        """
-    )
-
-    cursor.execute("SELECT discord_id, points FROM users")
-
-    for row in cursor.fetchall():
-        cursor.execute(
-            """
-            UPDATE users
-            SET level=%s
-            WHERE discord_id=%s
-            """,
-            (
-                get_level_from_xp(row["points"]),
-                row["discord_id"],
-            ),
-        )
-
-    for table in (
-        "legacy_submissions",
-        "legacy_challenges",
-        "legacy_users",
-    ):
-        if _table_exists(cursor, table):
-            cursor.execute(f'DROP TABLE "{table}"')
-
-    print("[DB] Legacy database migrated to the new AMS Cyberverse CTF schema.")
-
-
 def initialize_database():
     connection = get_connection()
 
     try:
-        _migrate_legacy_database(connection)
         _create_schema(connection.cursor())
         connection.commit()
 
@@ -667,11 +379,12 @@ def create_event(
             INSERT INTO events
             (name, description, status, start_at, end_at, created_at)
             VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (name, description, status, start_at, end_at, utc_now()),
         )
 
-        event_id = cursor.lastrowid
+        event_id = cursor.fetchone()["id"]
         connection.commit()
         return event_id
     except Exception:
@@ -909,6 +622,7 @@ def add_challenge(
                 created_at
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s)
+            RETURNING id
             """,
             (
                 event_id,
@@ -922,7 +636,7 @@ def add_challenge(
             ),
         )
 
-        challenge_id = cursor.lastrowid
+        challenge_id = cursor.fetchone()["id"]
 
         connection.commit()
 
@@ -1056,8 +770,8 @@ def register_user(
                 joined_at
             )
             VALUES (%s, %s, %s, 0, 1, 0, %s)
-        ON CONFLICT DO NOTHING
-        """,
+            ON CONFLICT (discord_id) DO NOTHING
+            """,
             (
                 discord_id,
                 username,
@@ -1546,6 +1260,7 @@ def create_quiz(
             INSERT INTO quizzes
             (title, description, category, difficulty, is_active, created_at)
             VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 title,
@@ -1556,7 +1271,7 @@ def create_quiz(
                 utc_now(),
             ),
         )
-        quiz_id = cursor.lastrowid
+        quiz_id = cursor.fetchone()["id"]
         connection.commit()
         return quiz_id
     except Exception:
@@ -1601,6 +1316,7 @@ def add_quiz_question(
                 correct_answer, points, is_active, created_at
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s)
+            RETURNING id
             """,
             (
                 quiz_id,
@@ -1614,7 +1330,7 @@ def add_quiz_question(
                 utc_now(),
             ),
         )
-        question_id = cursor.lastrowid
+        question_id = cursor.fetchone()["id"]
         connection.commit()
         return question_id
     except Exception:
@@ -1735,6 +1451,7 @@ def submit_quiz_answer(
                 is_correct, points_awarded, submitted_at
             )
             VALUES (%s, %s, %s, %s, 0, %s)
+            RETURNING id
             """,
             (
                 discord_id,
@@ -1744,7 +1461,7 @@ def submit_quiz_answer(
                 now,
             ),
         )
-        attempt_id = cursor.lastrowid
+        attempt_id = cursor.fetchone()["id"]
 
         if not correct:
             connection.commit()
