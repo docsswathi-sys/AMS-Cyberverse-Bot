@@ -1,0 +1,1910 @@
+import hashlib
+import hmac
+import os
+import shutil
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+DB_NAME = os.getenv("AMS_DB_NAME", "ams_cyberverse.db")
+
+DB_PATH = Path(DB_NAME)
+
+if not DB_PATH.is_absolute():
+    DB_PATH = Path(__file__).resolve().parent / DB_PATH
+
+
+def get_connection():
+    connection = sqlite3.connect(str(DB_PATH), timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+# ============================================================
+# TIME / SECURITY HELPERS
+# ============================================================
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def hash_flag(flag):
+    """Return a SHA-256 hash for a CTF flag."""
+    return hashlib.sha256(flag.strip().encode("utf-8")).hexdigest()
+
+
+def verify_flag(submitted_flag, flag_hash):
+    """Safely compare a submitted flag with its stored hash."""
+    submitted_hash = hash_flag(submitted_flag)
+    return hmac.compare_digest(submitted_hash, flag_hash)
+
+
+# ============================================================
+# 100-LEVEL PROGRESSION SYSTEM
+# ============================================================
+
+MAX_LEVEL = 100
+
+def get_level_from_xp(xp):
+    level = 1
+
+    while level < MAX_LEVEL:
+        if xp < get_xp_required(level + 1):
+            break
+        level += 1
+
+    return level
+
+
+def get_xp_required(level):
+    if level <= 1:
+        return 0
+
+    return int(100 * ((level - 1) ** 1.55))
+
+
+def get_rank(level):
+    if level <= 10:
+        return "ROOKIE"
+    if level <= 20:
+        return "RECRUIT"
+    if level <= 30:
+        return "SCOUT"
+    if level <= 40:
+        return "INVESTIGATOR"
+    if level <= 50:
+        return "OPERATIVE"
+    if level <= 60:
+        return "HUNTER"
+    if level <= 70:
+        return "RED TEAM"
+    if level <= 80:
+        return "ELITE"
+    if level <= 90:
+        return "COMMANDER"
+    if level <= 99:
+        return "OVERLORD"
+    return "GODMODE"
+
+
+def get_rank_emoji(level):
+    if level <= 10:
+        return "🟢"
+    if level <= 20:
+        return "🔰"
+    if level <= 30:
+        return "🛰️"
+    if level <= 40:
+        return "🔍"
+    if level <= 50:
+        return "⚔️"
+    if level <= 60:
+        return "🎯"
+    if level <= 70:
+        return "🔥"
+    if level <= 80:
+        return "💀"
+    if level <= 90:
+        return "👑"
+    if level <= 99:
+        return "⚡"
+    return "🟣"
+
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
+
+
+# ============================================================
+# MIGRATION HELPERS
+# ============================================================
+
+def _table_exists(cursor, table_name):
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    )
+    return cursor.fetchone() is not None
+
+
+def _column_names(cursor, table_name):
+    cursor.execute(f'PRAGMA table_info("{table_name}")')
+    return {row["name"] for row in cursor.fetchall()}
+
+
+def _backup_database():
+    if not DB_PATH.exists():
+        return None
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup_path = DB_PATH.with_name(
+        f"{DB_PATH.stem}_backup_{timestamp}{DB_PATH.suffix}"
+    )
+
+    shutil.copy2(DB_PATH, backup_path)
+    return backup_path
+
+
+# ============================================================
+# SCHEMA
+# ============================================================
+
+def _create_schema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK(status IN ('draft', 'active', 'ended')),
+            start_at TEXT,
+            end_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS challenges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            flag_hash TEXT NOT NULL,
+            points INTEGER NOT NULL CHECK(points > 0),
+            category TEXT NOT NULL,
+            difficulty TEXT NOT NULL DEFAULT 'medium'
+                CHECK(difficulty IN ('easy', 'medium', 'hard', 'expert')),
+            is_active INTEGER NOT NULL DEFAULT 1
+                CHECK(is_active IN (0, 1)),
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE RESTRICT
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            discord_id INTEGER PRIMARY KEY,
+            username TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            points INTEGER NOT NULL DEFAULT 0 CHECK(points >= 0),
+            level INTEGER NOT NULL DEFAULT 1 CHECK(level BETWEEN 1 AND 100),
+            challenges_solved INTEGER NOT NULL DEFAULT 0
+                CHECK(challenges_solved >= 0),
+            joined_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER NOT NULL,
+            challenge_id INTEGER NOT NULL,
+            submitted_flag_hash TEXT NOT NULL,
+            is_correct INTEGER NOT NULL DEFAULT 0
+                CHECK(is_correct IN (0, 1)),
+            submitted_at TEXT NOT NULL,
+            FOREIGN KEY(discord_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+            FOREIGN KEY(challenge_id) REFERENCES challenges(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS solves (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER NOT NULL,
+            challenge_id INTEGER NOT NULL,
+            event_id INTEGER NOT NULL,
+            points_awarded INTEGER NOT NULL CHECK(points_awarded > 0),
+            solved_at TEXT NOT NULL,
+            UNIQUE(discord_id, challenge_id),
+            FOREIGN KEY(discord_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+            FOREIGN KEY(challenge_id) REFERENCES challenges(id) ON DELETE CASCADE,
+            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE RESTRICT
+        )
+        """
+    )
+
+    # --------------------------------------------------------
+    # QUIZ / MCQ TABLES
+    # --------------------------------------------------------
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quizzes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL,
+            difficulty TEXT NOT NULL DEFAULT 'medium'
+                CHECK(difficulty IN ('easy', 'medium', 'hard', 'expert')),
+            is_active INTEGER NOT NULL DEFAULT 1
+                CHECK(is_active IN (0, 1)),
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quiz_id INTEGER NOT NULL,
+            question TEXT NOT NULL,
+            option_a TEXT NOT NULL,
+            option_b TEXT NOT NULL,
+            option_c TEXT NOT NULL,
+            option_d TEXT NOT NULL,
+            correct_answer TEXT NOT NULL
+                CHECK(correct_answer IN ('A', 'B', 'C', 'D')),
+            points INTEGER NOT NULL CHECK(points > 0),
+            is_active INTEGER NOT NULL DEFAULT 1
+                CHECK(is_active IN (0, 1)),
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            selected_answer TEXT NOT NULL
+                CHECK(selected_answer IN ('A', 'B', 'C', 'D')),
+            is_correct INTEGER NOT NULL DEFAULT 0
+                CHECK(is_correct IN (0, 1)),
+            points_awarded INTEGER NOT NULL DEFAULT 0
+                CHECK(points_awarded >= 0),
+            submitted_at TEXT NOT NULL,
+            FOREIGN KEY(discord_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+            FOREIGN KEY(question_id) REFERENCES quiz_questions(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS quiz_solves (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER NOT NULL,
+            question_id INTEGER NOT NULL,
+            quiz_id INTEGER NOT NULL,
+            points_awarded INTEGER NOT NULL CHECK(points_awarded > 0),
+            solved_at TEXT NOT NULL,
+            UNIQUE(discord_id, question_id),
+            FOREIGN KEY(discord_id) REFERENCES users(discord_id) ON DELETE CASCADE,
+            FOREIGN KEY(question_id) REFERENCES quiz_questions(id) ON DELETE CASCADE,
+            FOREIGN KEY(quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_challenges_event ON challenges(event_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_challenges_active ON challenges(is_active)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(discord_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_attempts_challenge ON attempts(challenge_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_solves_user ON solves(discord_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_solves_event ON solves(event_id)"
+    )
+
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quiz_questions_quiz ON quiz_questions(quiz_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quiz_questions_active ON quiz_questions(is_active)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(discord_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_question ON quiz_attempts(question_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quiz_solves_user ON quiz_solves(discord_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quiz_solves_quiz ON quiz_solves(quiz_id)"
+    )
+
+
+# ============================================================
+# LEGACY DATABASE MIGRATION
+# ============================================================
+
+def _migrate_legacy_database(connection):
+    cursor = connection.cursor()
+
+    has_old_challenges = _table_exists(cursor, "challenges")
+    has_old_users = _table_exists(cursor, "users")
+    has_old_submissions = _table_exists(cursor, "submissions")
+
+    if not (has_old_challenges or has_old_users or has_old_submissions):
+        return
+
+    # New schema is already present.
+    if (
+        _table_exists(cursor, "events")
+        and "flag_hash" in _column_names(cursor, "challenges")
+        and _table_exists(cursor, "attempts")
+        and _table_exists(cursor, "solves")
+    ):
+        return
+
+    backup_path = _backup_database()
+
+    if backup_path:
+        print(f"[DB] Legacy database backup created: {backup_path}")
+
+    if has_old_challenges:
+        cursor.execute("ALTER TABLE challenges RENAME TO legacy_challenges")
+
+    if has_old_users:
+        cursor.execute("ALTER TABLE users RENAME TO legacy_users")
+
+    if has_old_submissions:
+        cursor.execute("ALTER TABLE submissions RENAME TO legacy_submissions")
+
+    _create_schema(cursor)
+
+    now = utc_now()
+
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO events
+        (id, name, description, status, created_at)
+        VALUES (
+            1,
+            'Legacy CTF',
+            'Migrated challenges from the original AMS Cyberverse database.',
+            'active',
+            ?
+        )
+        """,
+        (now,),
+    )
+
+    # --------------------------------------------------------
+    # USERS
+    # --------------------------------------------------------
+
+    if has_old_users:
+        cursor.execute(
+            """
+            SELECT
+                discord_id,
+                username,
+                display_name,
+                points,
+                level,
+                challenges_solved,
+                joined_at
+            FROM legacy_users
+            """
+        )
+
+        for row in cursor.fetchall():
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO users
+                (
+                    discord_id,
+                    username,
+                    display_name,
+                    points,
+                    level,
+                    challenges_solved,
+                    joined_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["discord_id"],
+                    row["username"],
+                    row["display_name"],
+                    row["points"] or 0,
+                    max(1, min(MAX_LEVEL, row["level"] or 1)),
+                    row["challenges_solved"] or 0,
+                    row["joined_at"] or now,
+                ),
+            )
+
+    # --------------------------------------------------------
+    # CHALLENGES
+    # --------------------------------------------------------
+
+    if has_old_challenges:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                name,
+                description,
+                flag,
+                points,
+                category
+            FROM legacy_challenges
+            ORDER BY id
+            """
+        )
+
+        for row in cursor.fetchall():
+            cursor.execute(
+                """
+                INSERT INTO challenges
+                (
+                    id,
+                    event_id,
+                    name,
+                    description,
+                    flag_hash,
+                    points,
+                    category,
+                    difficulty,
+                    is_active,
+                    created_at
+                )
+                VALUES (?, 1, ?, ?, ?, ?, ?, 'medium', 1, ?)
+                """,
+                (
+                    row["id"],
+                    row["name"],
+                    row["description"],
+                    hash_flag(row["flag"]),
+                    row["points"],
+                    row["category"],
+                    now,
+                ),
+            )
+
+    # --------------------------------------------------------
+    # OLD SUCCESSFUL SUBMISSIONS -> SOLVES
+    # --------------------------------------------------------
+
+    if has_old_submissions:
+        cursor.execute(
+            """
+            SELECT
+                discord_id,
+                challenge_id,
+                submitted_at
+            FROM legacy_submissions
+            """
+        )
+
+        for row in cursor.fetchall():
+            cursor.execute(
+                """
+                SELECT event_id, points
+                FROM challenges
+                WHERE id=?
+                """,
+                (row["challenge_id"],),
+            )
+
+            challenge = cursor.fetchone()
+
+            if challenge is None:
+                continue
+
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO solves
+                (
+                    discord_id,
+                    challenge_id,
+                    event_id,
+                    points_awarded,
+                    solved_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    row["discord_id"],
+                    row["challenge_id"],
+                    challenge["event_id"],
+                    challenge["points"],
+                    row["submitted_at"] or now,
+                ),
+            )
+
+    # Recalculate all-time stats from actual solves.
+    cursor.execute(
+        """
+        UPDATE users
+        SET
+            challenges_solved = (
+                SELECT COUNT(*)
+                FROM solves
+                WHERE solves.discord_id = users.discord_id
+            ),
+            points = (
+                SELECT COALESCE(SUM(points_awarded), 0)
+                FROM solves
+                WHERE solves.discord_id = users.discord_id
+            )
+        """
+    )
+
+    cursor.execute("SELECT discord_id, points FROM users")
+
+    for row in cursor.fetchall():
+        cursor.execute(
+            """
+            UPDATE users
+            SET level=?
+            WHERE discord_id=?
+            """,
+            (
+                get_level_from_xp(row["points"]),
+                row["discord_id"],
+            ),
+        )
+
+    for table in (
+        "legacy_submissions",
+        "legacy_challenges",
+        "legacy_users",
+    ):
+        if _table_exists(cursor, table):
+            cursor.execute(f'DROP TABLE "{table}"')
+
+    print("[DB] Legacy database migrated to the new AMS Cyberverse CTF schema.")
+
+
+def initialize_database():
+    connection = get_connection()
+
+    try:
+        _migrate_legacy_database(connection)
+        _create_schema(connection.cursor())
+        connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+
+# ============================================================
+# EVENTS
+# ============================================================
+
+def create_event(
+    name,
+    description="",
+    status="draft",
+    start_at=None,
+    end_at=None,
+):
+    """Create a CTF event with a validated lifecycle status."""
+    name = name.strip()
+    description = description.strip()
+    status = status.lower().strip()
+
+    if not name:
+        raise ValueError("Event name cannot be empty.")
+
+    if status not in {"draft", "active", "ended"}:
+        raise ValueError(
+            "Invalid event status. Must be draft, active, or ended."
+        )
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+
+        if status == "active":
+            cursor.execute(
+                "UPDATE events SET status='ended' WHERE status='active'"
+            )
+
+        cursor.execute(
+            """
+            INSERT INTO events
+            (name, description, status, start_at, end_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (name, description, status, start_at, end_at, utc_now()),
+        )
+
+        event_id = cursor.lastrowid
+        connection.commit()
+        return event_id
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def update_event_status(event_id, status):
+    """Update an event status and enforce one active event at a time."""
+    status = status.lower().strip()
+
+    if status not in {"draft", "active", "ended"}:
+        raise ValueError(
+            "Invalid event status. Must be draft, active, or ended."
+        )
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        event = cursor.execute(
+            "SELECT id FROM events WHERE id=?", (event_id,)
+        ).fetchone()
+
+        if event is None:
+            return False
+
+        if status == "active":
+            cursor.execute(
+                """
+                UPDATE events
+                SET status='ended'
+                WHERE status='active' AND id != ?
+                """,
+                (event_id,),
+            )
+
+        cursor.execute(
+            "UPDATE events SET status=? WHERE id=?",
+            (status, event_id),
+        )
+        connection.commit()
+        return True
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def get_event_challenges(event_id, active_only=True):
+    """Return challenge metadata belonging to one event."""
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        query = """
+            SELECT
+                c.id, c.event_id, c.name, c.description, c.points,
+                c.category, c.difficulty, c.is_active, c.created_at,
+                e.name AS event_name
+            FROM challenges c
+            JOIN events e ON e.id=c.event_id
+            WHERE c.event_id=?
+        """
+        params = [event_id]
+
+        if active_only:
+            query += " AND c.is_active=1"
+
+        query += " ORDER BY c.id"
+        cursor.execute(query, params)
+        return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+def get_event(event_id):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                name,
+                description,
+                status,
+                start_at,
+                end_at,
+                created_at
+            FROM events
+            WHERE id=?
+            """,
+            (event_id,),
+        )
+
+        return cursor.fetchone()
+
+    finally:
+        connection.close()
+
+
+def get_events(status=None):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        if status:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    description,
+                    status,
+                    start_at,
+                    end_at,
+                    created_at
+                FROM events
+                WHERE status=?
+                ORDER BY id DESC
+                """,
+                (status,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    name,
+                    description,
+                    status,
+                    start_at,
+                    end_at,
+                    created_at
+                FROM events
+                ORDER BY id DESC
+                """
+            )
+
+        return cursor.fetchall()
+
+    finally:
+        connection.close()
+
+
+def get_active_event():
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                name,
+                description,
+                status,
+                start_at,
+                end_at,
+                created_at
+            FROM events
+            WHERE status='active'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+
+        return cursor.fetchone()
+
+    finally:
+        connection.close()
+
+
+# ============================================================
+# CHALLENGES
+# ============================================================
+
+def add_challenge(
+    name,
+    description,
+    flag,
+    points,
+    category,
+    event_id=None,
+    difficulty="medium",
+):
+    if points <= 0:
+        raise ValueError("Points must be greater than 0.")
+
+    difficulty = difficulty.lower().strip()
+
+    if difficulty not in {
+        "easy",
+        "medium",
+        "hard",
+        "expert",
+    }:
+        raise ValueError("Invalid difficulty.")
+
+    if event_id is None:
+        active_event = get_active_event()
+
+        if active_event is None:
+            event_id = create_event(
+                "AMS Cyberverse CTF",
+                "Default active CTF event.",
+                "active",
+            )
+        else:
+            event_id = active_event["id"]
+
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO challenges
+            (
+                event_id,
+                name,
+                description,
+                flag_hash,
+                points,
+                category,
+                difficulty,
+                is_active,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                event_id,
+                name.strip(),
+                description.strip(),
+                hash_flag(flag),
+                points,
+                category.strip(),
+                difficulty,
+                utc_now(),
+            ),
+        )
+
+        challenge_id = cursor.lastrowid
+
+        connection.commit()
+
+        return challenge_id
+
+    finally:
+        connection.close()
+
+
+def get_challenges(event_id=None, active_only=True):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        query = """
+            SELECT
+                c.id,
+                c.event_id,
+                c.name,
+                c.description,
+                c.points,
+                c.category,
+                c.difficulty,
+                c.is_active,
+                e.name AS event_name
+            FROM challenges c
+            JOIN events e ON e.id=c.event_id
+            WHERE 1=1
+        """
+
+        params = []
+
+        if event_id is not None:
+            query += " AND c.event_id=?"
+            params.append(event_id)
+
+        if active_only:
+            query += " AND c.is_active=1"
+
+        query += " ORDER BY c.id"
+
+        cursor.execute(query, params)
+
+        return cursor.fetchall()
+
+    finally:
+        connection.close()
+
+
+def get_challenge(challenge_id):
+    """
+    Return challenge metadata only.
+    The flag hash is intentionally not returned.
+    """
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                c.id,
+                c.event_id,
+                c.name,
+                c.description,
+                c.points,
+                c.category,
+                c.difficulty,
+                c.is_active,
+                e.name AS event_name
+            FROM challenges c
+            JOIN events e ON e.id=c.event_id
+            WHERE c.id=?
+            """,
+            (challenge_id,),
+        )
+
+        return cursor.fetchone()
+
+    finally:
+        connection.close()
+
+
+def _get_challenge_for_validation(cursor, challenge_id):
+    cursor.execute(
+        """
+        SELECT
+            id,
+            event_id,
+            name,
+            flag_hash,
+            points,
+            is_active
+        FROM challenges
+        WHERE id=?
+        """,
+        (challenge_id,),
+    )
+
+    return cursor.fetchone()
+
+
+# ============================================================
+# USERS
+# ============================================================
+
+def register_user(
+    discord_id,
+    username,
+    display_name,
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        now = utc_now()
+
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO users
+            (
+                discord_id,
+                username,
+                display_name,
+                points,
+                level,
+                challenges_solved,
+                joined_at
+            )
+            VALUES (?, ?, ?, 0, 1, 0, ?)
+            """,
+            (
+                discord_id,
+                username,
+                display_name,
+                now,
+            ),
+        )
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET
+                username=?,
+                display_name=?
+            WHERE discord_id=?
+            """,
+            (
+                username,
+                display_name,
+                discord_id,
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def get_user(discord_id):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                discord_id,
+                username,
+                display_name,
+                points,
+                level,
+                challenges_solved,
+                joined_at
+            FROM users
+            WHERE discord_id=?
+            """,
+            (discord_id,),
+        )
+
+        return cursor.fetchone()
+
+    finally:
+        connection.close()
+
+
+# ============================================================
+# ATTEMPTS / SUBMISSIONS
+# ============================================================
+
+def record_attempt(
+    discord_id,
+    challenge_id,
+    submitted_flag,
+):
+    """
+    Record every flag attempt.
+    Plaintext flags are never stored.
+    """
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        now = utc_now()
+
+        challenge = _get_challenge_for_validation(
+            cursor,
+            challenge_id,
+        )
+
+        if challenge is None:
+            return {"status": "not_found"}
+
+        if not challenge["is_active"]:
+            return {"status": "inactive"}
+
+        submitted_hash = hash_flag(submitted_flag)
+
+        correct = hmac.compare_digest(
+            submitted_hash,
+            challenge["flag_hash"],
+        )
+
+        cursor.execute(
+            """
+            INSERT INTO attempts
+            (
+                discord_id,
+                challenge_id,
+                submitted_flag_hash,
+                is_correct,
+                submitted_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                discord_id,
+                challenge_id,
+                submitted_hash,
+                int(correct),
+                now,
+            ),
+        )
+
+        connection.commit()
+
+        return {
+            "status": "correct" if correct else "incorrect",
+            "challenge_id": challenge["id"],
+            "event_id": challenge["event_id"],
+            "name": challenge["name"],
+            "points": challenge["points"],
+        }
+
+    finally:
+        connection.close()
+
+
+def record_solve(
+    discord_id,
+    challenge_id,
+    points=None,
+):
+    """
+    Award a successful solve exactly once.
+    Flag validation should happen before this function.
+    """
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        now = utc_now()
+
+        challenge = _get_challenge_for_validation(
+            cursor,
+            challenge_id,
+        )
+
+        if challenge is None or not challenge["is_active"]:
+            return False
+
+        awarded_points = (
+            points
+            if points is not None
+            else challenge["points"]
+        )
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO solves
+                (
+                    discord_id,
+                    challenge_id,
+                    event_id,
+                    points_awarded,
+                    solved_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    discord_id,
+                    challenge_id,
+                    challenge["event_id"],
+                    awarded_points,
+                    now,
+                ),
+            )
+
+        except sqlite3.IntegrityError:
+            connection.rollback()
+            return False
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET
+                points=points+?,
+                challenges_solved=challenges_solved+1
+            WHERE discord_id=?
+            """,
+            (
+                awarded_points,
+                discord_id,
+            ),
+        )
+
+        cursor.execute(
+            """
+            SELECT points
+            FROM users
+            WHERE discord_id=?
+            """,
+            (discord_id,),
+        )
+
+        user = cursor.fetchone()
+
+        if user is not None:
+            cursor.execute(
+                """
+                UPDATE users
+                SET level=?
+                WHERE discord_id=?
+                """,
+                (
+                    get_level_from_xp(user["points"]),
+                    discord_id,
+                ),
+            )
+
+        connection.commit()
+
+        return True
+
+    finally:
+        connection.close()
+
+
+def submit_flag(
+    discord_id,
+    challenge_id,
+    submitted_flag,
+):
+    """
+    Complete CTF submission flow:
+    validate -> record attempt -> prevent duplicate solve -> award points.
+    """
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        now = utc_now()
+
+        challenge = _get_challenge_for_validation(
+            cursor,
+            challenge_id,
+        )
+
+        if challenge is None:
+            return {"status": "not_found"}
+
+        if not challenge["is_active"]:
+            return {"status": "inactive"}
+
+        submitted_hash = hash_flag(submitted_flag)
+
+        correct = hmac.compare_digest(
+            submitted_hash,
+            challenge["flag_hash"],
+        )
+
+        # Every attempt is recorded.
+        cursor.execute(
+            """
+            INSERT INTO attempts
+            (
+                discord_id,
+                challenge_id,
+                submitted_flag_hash,
+                is_correct,
+                submitted_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                discord_id,
+                challenge_id,
+                submitted_hash,
+                int(correct),
+                now,
+            ),
+        )
+
+        if not correct:
+            connection.commit()
+
+            return {
+                "status": "incorrect",
+                "name": challenge["name"],
+            }
+
+        # A challenge can only be solved once by a user.
+        try:
+            cursor.execute(
+                """
+                INSERT INTO solves
+                (
+                    discord_id,
+                    challenge_id,
+                    event_id,
+                    points_awarded,
+                    solved_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    discord_id,
+                    challenge_id,
+                    challenge["event_id"],
+                    challenge["points"],
+                    now,
+                ),
+            )
+
+        except sqlite3.IntegrityError:
+            connection.commit()
+
+            return {
+                "status": "already_solved",
+                "name": challenge["name"],
+            }
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET
+                points=points+?,
+                challenges_solved=challenges_solved+1
+            WHERE discord_id=?
+            """,
+            (
+                challenge["points"],
+                discord_id,
+            ),
+        )
+
+        cursor.execute(
+            """
+            SELECT
+                points,
+                level
+            FROM users
+            WHERE discord_id=?
+            """,
+            (discord_id,),
+        )
+
+        user = cursor.fetchone()
+
+        total_points = 0
+        new_level = 1
+
+        if user is not None:
+            total_points = user["points"]
+            new_level = get_level_from_xp(total_points)
+
+            cursor.execute(
+                """
+                UPDATE users
+                SET level=?
+                WHERE discord_id=?
+                """,
+                (
+                    new_level,
+                    discord_id,
+                ),
+            )
+
+        connection.commit()
+
+        return {
+            "status": "correct",
+            "name": challenge["name"],
+            "points": challenge["points"],
+            "total_points": total_points,
+            "level": new_level,
+        }
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+
+def has_solved(
+    discord_id,
+    challenge_id,
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT 1
+            FROM solves
+            WHERE discord_id=? AND challenge_id=?
+            LIMIT 1
+            """,
+            (
+                discord_id,
+                challenge_id,
+            ),
+        )
+
+        return cursor.fetchone() is not None
+
+    finally:
+        connection.close()
+
+
+def get_solve_count(
+    discord_id,
+    event_id=None,
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        if event_id is None:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM solves
+                WHERE discord_id=?
+                """,
+                (discord_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM solves
+                WHERE discord_id=? AND event_id=?
+                """,
+                (
+                    discord_id,
+                    event_id,
+                ),
+            )
+
+        return cursor.fetchone()["count"]
+
+    finally:
+        connection.close()
+
+
+# ============================================================
+# QUIZZES / MCQs
+# ============================================================
+
+def create_quiz(
+    title,
+    description="",
+    category="Cybersecurity",
+    difficulty="medium",
+    is_active=True,
+):
+    """Create a cybersecurity MCQ quiz."""
+    title = title.strip()
+    description = description.strip()
+    category = category.strip()
+    difficulty = difficulty.lower().strip()
+
+    if not title:
+        raise ValueError("Quiz title cannot be empty.")
+    if not category:
+        raise ValueError("Quiz category cannot be empty.")
+    if difficulty not in {"easy", "medium", "hard", "expert"}:
+        raise ValueError("Invalid quiz difficulty.")
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO quizzes
+            (title, description, category, difficulty, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title,
+                description,
+                category,
+                difficulty,
+                int(is_active),
+                utc_now(),
+            ),
+        )
+        quiz_id = cursor.lastrowid
+        connection.commit()
+        return quiz_id
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def add_quiz_question(
+    quiz_id,
+    question,
+    option_a,
+    option_b,
+    option_c,
+    option_d,
+    correct_answer,
+    points=10,
+):
+    """Add one MCQ. The correct answer is stored server-side only."""
+    correct_answer = correct_answer.upper().strip()
+    if correct_answer not in {"A", "B", "C", "D"}:
+        raise ValueError("Correct answer must be A, B, C, or D.")
+    if points <= 0:
+        raise ValueError("Question points must be greater than 0.")
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        quiz = cursor.execute(
+            "SELECT id FROM quizzes WHERE id=?",
+            (quiz_id,),
+        ).fetchone()
+        if quiz is None:
+            raise ValueError("Quiz not found.")
+
+        cursor.execute(
+            """
+            INSERT INTO quiz_questions
+            (
+                quiz_id, question, option_a, option_b, option_c, option_d,
+                correct_answer, points, is_active, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                quiz_id,
+                question.strip(),
+                option_a.strip(),
+                option_b.strip(),
+                option_c.strip(),
+                option_d.strip(),
+                correct_answer,
+                points,
+                utc_now(),
+            ),
+        )
+        question_id = cursor.lastrowid
+        connection.commit()
+        return question_id
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def get_quizzes(active_only=True):
+    """Return quiz metadata without exposing any answer key."""
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        query = """
+            SELECT
+                id, title, description, category, difficulty,
+                is_active, created_at
+            FROM quizzes
+            WHERE 1=1
+        """
+        if active_only:
+            query += " AND is_active=1"
+        query += " ORDER BY id DESC"
+        cursor.execute(query)
+        return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+def get_quiz(quiz_id):
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id, title, description, category, difficulty,
+                is_active, created_at
+            FROM quizzes
+            WHERE id=?
+            """,
+            (quiz_id,),
+        )
+        return cursor.fetchone()
+    finally:
+        connection.close()
+
+
+def get_quiz_questions(quiz_id, active_only=True):
+    """Return MCQs without the correct answer."""
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        query = """
+            SELECT
+                id, quiz_id, question, option_a, option_b, option_c, option_d,
+                points, is_active, created_at
+            FROM quiz_questions
+            WHERE quiz_id=?
+        """
+        params = [quiz_id]
+        if active_only:
+            query += " AND is_active=1"
+        query += " ORDER BY id"
+        cursor.execute(query, params)
+        return cursor.fetchall()
+    finally:
+        connection.close()
+
+
+def submit_quiz_answer(
+    discord_id,
+    question_id,
+    selected_answer,
+):
+    """
+    Validate one MCQ answer, record every attempt, and award points only
+    on the user's first correct solve of that question. Quiz points are
+    added directly to users.points, so the existing global leaderboard
+    automatically includes both CTF and quiz scores.
+    """
+    selected_answer = selected_answer.upper().strip()
+    if selected_answer not in {"A", "B", "C", "D"}:
+        raise ValueError("Selected answer must be A, B, C, or D.")
+
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        now = utc_now()
+
+        question = cursor.execute(
+            """
+            SELECT
+                qq.id, qq.quiz_id, qq.correct_answer, qq.points, qq.is_active,
+                q.is_active AS quiz_is_active
+            FROM quiz_questions qq
+            JOIN quizzes q ON q.id=qq.quiz_id
+            WHERE qq.id=?
+            """,
+            (question_id,),
+        ).fetchone()
+
+        if question is None:
+            return {"status": "not_found"}
+
+        if not question["is_active"] or not question["quiz_is_active"]:
+            return {"status": "inactive"}
+
+        correct = selected_answer == question["correct_answer"]
+
+        # Every attempt is recorded. No answer key is stored in the attempt.
+        cursor.execute(
+            """
+            INSERT INTO quiz_attempts
+            (
+                discord_id, question_id, selected_answer,
+                is_correct, points_awarded, submitted_at
+            )
+            VALUES (?, ?, ?, ?, 0, ?)
+            """,
+            (
+                discord_id,
+                question_id,
+                selected_answer,
+                int(correct),
+                now,
+            ),
+        )
+        attempt_id = cursor.lastrowid
+
+        if not correct:
+            connection.commit()
+            return {
+                "status": "incorrect",
+                "question_id": question_id,
+                "quiz_id": question["quiz_id"],
+            }
+
+        # A question awards points only once per user.
+        try:
+            cursor.execute(
+                """
+                INSERT INTO quiz_solves
+                (discord_id, question_id, quiz_id, points_awarded, solved_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    discord_id,
+                    question_id,
+                    question["quiz_id"],
+                    question["points"],
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            connection.commit()
+            return {
+                "status": "already_solved",
+                "question_id": question_id,
+                "quiz_id": question["quiz_id"],
+            }
+
+        cursor.execute(
+            """
+            UPDATE quiz_attempts
+            SET points_awarded=?
+            WHERE id=?
+            """,
+            (question["points"], attempt_id),
+        )
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET points=points+?
+            WHERE discord_id=?
+            """,
+            (question["points"], discord_id),
+        )
+
+        user = cursor.execute(
+            """
+            SELECT points FROM users WHERE discord_id=?
+            """,
+            (discord_id,),
+        ).fetchone()
+
+        total_points = 0
+        new_level = 1
+        if user is not None:
+            total_points = user["points"]
+            new_level = get_level_from_xp(total_points)
+            cursor.execute(
+                """
+                UPDATE users
+                SET level=?
+                WHERE discord_id=?
+                """,
+                (new_level, discord_id),
+            )
+
+        connection.commit()
+
+        return {
+            "status": "correct",
+            "question_id": question_id,
+            "quiz_id": question["quiz_id"],
+            "points": question["points"],
+            "total_points": total_points,
+            "level": new_level,
+        }
+
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def get_quiz_score(discord_id, quiz_id):
+    """Return points and solved-question count for one user in one quiz."""
+    connection = get_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COALESCE(SUM(points_awarded), 0) AS points,
+                COUNT(*) AS questions_solved
+            FROM quiz_solves
+            WHERE discord_id=? AND quiz_id=?
+            """,
+            (discord_id, quiz_id),
+        )
+        return cursor.fetchone()
+    finally:
+        connection.close()
+
+
+# ============================================================
+# LEADERBOARDS
+# ============================================================
+
+def get_leaderboard(
+    limit=10,
+    event_id=None,
+):
+    connection = get_connection()
+
+    try:
+        cursor = connection.cursor()
+
+        if event_id is None:
+            cursor.execute(
+                """
+                SELECT
+                    discord_id,
+                    username,
+                    display_name,
+                    points,
+                    level,
+                    challenges_solved
+                FROM users
+                ORDER BY
+                    points DESC,
+                    challenges_solved DESC,
+                    joined_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    u.discord_id,
+                    u.username,
+                    u.display_name,
+                    COALESCE(SUM(s.points_awarded), 0) AS points,
+                    u.level,
+                    COUNT(s.id) AS challenges_solved
+                FROM users u
+                LEFT JOIN solves s
+                    ON s.discord_id=u.discord_id
+                    AND s.event_id=?
+                GROUP BY u.discord_id
+                HAVING COALESCE(SUM(s.points_awarded), 0) > 0
+                ORDER BY
+                    points DESC,
+                    challenges_solved DESC,
+                    u.joined_at ASC
+                LIMIT ?
+                """,
+                (
+                    event_id,
+                    limit,
+                ),
+            )
+
+        return cursor.fetchall()
+
+    finally:
+        connection.close()
+
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+initialize_database()

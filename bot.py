@@ -11,10 +11,8 @@ import discord
 from discord import app_commands
 
 from database_postgres import (
-    activate_event,
     add_challenge,
     create_event,
-    end_event,
     get_challenges,
     get_event,
     get_event_challenges,
@@ -24,7 +22,8 @@ from database_postgres import (
     get_user,
     get_xp_required,
     register_user,
-    submit_challenge,
+    submit_flag,
+    update_event_status,
 )
 
 # ============================================================
@@ -218,7 +217,14 @@ async def activateevent(
         )
         return
 
-    activate_event(event_id)
+    updated = update_event_status(event_id, "active")
+
+    if not updated:
+        await interaction.response.send_message(
+            "❌ Could not activate the event.",
+            ephemeral=True,
+        )
+        return
 
     await interaction.response.send_message(
         f"🟢 Event **{event_data['name']}** is now ACTIVE!"
@@ -248,7 +254,14 @@ async def endevent(
         )
         return
 
-    end_event(event_id)
+    updated = update_event_status(event_id, "ended")
+
+    if not updated:
+        await interaction.response.send_message(
+            "❌ Could not end the event.",
+            ephemeral=True,
+        )
+        return
 
     await interaction.response.send_message(
         f"🔴 Event **{event_data['name']}** has ended."
@@ -389,15 +402,22 @@ async def submit(
         interaction.user.display_name,
     )
 
-    result = submit_challenge(
+    result = submit_flag(
         interaction.user.id,
         challenge_id,
         flag,
     )
 
-    if result is None:
+    if result["status"] == "not_found":
         await interaction.response.send_message(
             "❌ Challenge not found.",
+            ephemeral=True,
+        )
+        return
+
+    if result["status"] == "inactive":
+        await interaction.response.send_message(
+            "⚠️ This challenge is inactive.",
             ephemeral=True,
         )
         return
@@ -411,26 +431,17 @@ async def submit(
 
     if result["status"] == "incorrect":
         await interaction.response.send_message(
-            "❌ Incorrect flag. Keep hunting.",
-            ephemeral=True,
-        )
-        return
-
-    user = get_user(interaction.user.id)
-
-    if user is None:
-        await interaction.response.send_message(
-            "⚠️ Challenge solved, but profile could not be loaded.",
+            f"❌ Incorrect flag for **{result['name']}**. Keep hunting.",
             ephemeral=True,
         )
         return
 
     await interaction.response.send_message(
         f"🏆 **Challenge Solved!**\n\n"
-        f"⚔️ Challenge: **{result['challenge_name']}**\n"
+        f"⚔️ Challenge: **{result['name']}**\n"
         f"💰 Points earned: **+{result['points']}**\n"
-        f"📈 Total XP: **{user['points']}**\n"
-        f"🔥 Level: **{user['level']}**"
+        f"📈 Total XP: **{result['total_points']}**\n"
+        f"🔥 Level: **{result['level']}**"
     )
 
 
