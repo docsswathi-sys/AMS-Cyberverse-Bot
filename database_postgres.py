@@ -44,6 +44,7 @@ def verify_flag(submitted_flag, flag_hash):
 
 MAX_LEVEL = 100
 
+
 def get_level_from_xp(xp):
     level = 1
 
@@ -121,6 +122,37 @@ def _migrate_legacy_database(connection):
     kept separately as a local backup and is never inspected by this module.
     """
     return
+
+
+def _migrate_discord_id_columns(connection):
+    """
+    Ensure all Discord ID columns use PostgreSQL BIGINT.
+
+    IMPORTANT:
+    CREATE TABLE IF NOT EXISTS does not modify an existing table.
+    Therefore, databases created before Discord IDs were changed from
+    INTEGER to BIGINT can still contain INTEGER columns.
+
+    Discord snowflake IDs are larger than PostgreSQL INTEGER can hold,
+    so all Discord ID columns must use BIGINT.
+    """
+    cursor = connection.cursor()
+
+    discord_id_tables = (
+        "users",
+        "attempts",
+        "solves",
+        "quiz_attempts",
+        "quiz_solves",
+    )
+
+    for table in discord_id_tables:
+        cursor.execute(
+            f"""
+            ALTER TABLE {table}
+            ALTER COLUMN discord_id TYPE BIGINT
+            """
+        )
 
 
 # ============================================================
@@ -214,6 +246,7 @@ def _create_schema(cursor):
     # --------------------------------------------------------
     # QUIZ / MCQ TABLES
     # --------------------------------------------------------
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS quizzes (
@@ -290,18 +323,23 @@ def _create_schema(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_challenges_event ON challenges(event_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_challenges_active ON challenges(is_active)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(discord_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_attempts_challenge ON attempts(challenge_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_solves_user ON solves(discord_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_solves_event ON solves(event_id)"
     )
@@ -309,18 +347,23 @@ def _create_schema(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_quiz_questions_quiz ON quiz_questions(quiz_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_quiz_questions_active ON quiz_questions(is_active)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user ON quiz_attempts(discord_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_question ON quiz_attempts(question_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_quiz_solves_user ON quiz_solves(discord_id)"
     )
+
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_quiz_solves_quiz ON quiz_solves(quiz_id)"
     )
@@ -331,6 +374,13 @@ def initialize_database():
 
     try:
         _create_schema(connection.cursor())
+
+        # IMPORTANT:
+        # _create_schema() only creates missing tables.
+        # Existing Neon tables keep their old column types.
+        # This migration converts old INTEGER Discord IDs to BIGINT.
+        _migrate_discord_id_columns(connection)
+
         connection.commit()
 
     except Exception:
@@ -366,6 +416,7 @@ def create_event(
         )
 
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
 
@@ -381,15 +432,26 @@ def create_event(
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (name, description, status, start_at, end_at, utc_now()),
+            (
+                name,
+                description,
+                status,
+                start_at,
+                end_at,
+                utc_now(),
+            ),
         )
 
         event_id = cursor.fetchone()["id"]
+
         connection.commit()
+
         return event_id
+
     except Exception:
         connection.rollback()
         raise
+
     finally:
         connection.close()
 
@@ -404,10 +466,13 @@ def update_event_status(event_id, status):
         )
 
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         event = cursor.execute(
-            "SELECT id FROM events WHERE id=%s", (event_id,)
+            "SELECT id FROM events WHERE id=%s",
+            (event_id,),
         ).fetchone()
 
         if event is None:
@@ -427,11 +492,15 @@ def update_event_status(event_id, status):
             "UPDATE events SET status=%s WHERE id=%s",
             (status, event_id),
         )
+
         connection.commit()
+
         return True
+
     except Exception:
         connection.rollback()
         raise
+
     finally:
         connection.close()
 
@@ -439,25 +508,38 @@ def update_event_status(event_id, status):
 def get_event_challenges(event_id, active_only=True):
     """Return challenge metadata belonging to one event."""
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         query = """
             SELECT
-                c.id, c.event_id, c.name, c.description, c.points,
-                c.category, c.difficulty, c.is_active, c.created_at,
+                c.id,
+                c.event_id,
+                c.name,
+                c.description,
+                c.points,
+                c.category,
+                c.difficulty,
+                c.is_active,
+                c.created_at,
                 e.name AS event_name
             FROM challenges c
             JOIN events e ON e.id=c.event_id
             WHERE c.event_id=%s
         """
+
         params = [event_id]
 
         if active_only:
             query += " AND c.is_active=1"
 
         query += " ORDER BY c.id"
+
         cursor.execute(query, params)
+
         return cursor.fetchall()
+
     finally:
         connection.close()
 
@@ -1247,18 +1329,29 @@ def create_quiz(
 
     if not title:
         raise ValueError("Quiz title cannot be empty.")
+
     if not category:
         raise ValueError("Quiz category cannot be empty.")
+
     if difficulty not in {"easy", "medium", "hard", "expert"}:
         raise ValueError("Invalid quiz difficulty.")
 
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         cursor.execute(
             """
             INSERT INTO quizzes
-            (title, description, category, difficulty, is_active, created_at)
+            (
+                title,
+                description,
+                category,
+                difficulty,
+                is_active,
+                created_at
+            )
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
@@ -1271,12 +1364,17 @@ def create_quiz(
                 utc_now(),
             ),
         )
+
         quiz_id = cursor.fetchone()["id"]
+
         connection.commit()
+
         return quiz_id
+
     except Exception:
         connection.rollback()
         raise
+
     finally:
         connection.close()
 
@@ -1293,18 +1391,23 @@ def add_quiz_question(
 ):
     """Add one MCQ. The correct answer is stored server-side only."""
     correct_answer = correct_answer.upper().strip()
+
     if correct_answer not in {"A", "B", "C", "D"}:
         raise ValueError("Correct answer must be A, B, C, or D.")
+
     if points <= 0:
         raise ValueError("Question points must be greater than 0.")
 
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         quiz = cursor.execute(
             "SELECT id FROM quizzes WHERE id=%s",
             (quiz_id,),
         ).fetchone()
+
         if quiz is None:
             raise ValueError("Quiz not found.")
 
@@ -1312,8 +1415,16 @@ def add_quiz_question(
             """
             INSERT INTO quiz_questions
             (
-                quiz_id, question, option_a, option_b, option_c, option_d,
-                correct_answer, points, is_active, created_at
+                quiz_id,
+                question,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                correct_answer,
+                points,
+                is_active,
+                created_at
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s)
             RETURNING id
@@ -1330,12 +1441,17 @@ def add_quiz_question(
                 utc_now(),
             ),
         )
+
         question_id = cursor.fetchone()["id"]
+
         connection.commit()
+
         return question_id
+
     except Exception:
         connection.rollback()
         raise
+
     finally:
         connection.close()
 
@@ -1343,39 +1459,60 @@ def add_quiz_question(
 def get_quizzes(active_only=True):
     """Return quiz metadata without exposing any answer key."""
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         query = """
             SELECT
-                id, title, description, category, difficulty,
-                is_active, created_at
+                id,
+                title,
+                description,
+                category,
+                difficulty,
+                is_active,
+                created_at
             FROM quizzes
             WHERE 1=1
         """
+
         if active_only:
             query += " AND is_active=1"
+
         query += " ORDER BY id DESC"
+
         cursor.execute(query)
+
         return cursor.fetchall()
+
     finally:
         connection.close()
 
 
 def get_quiz(quiz_id):
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         cursor.execute(
             """
             SELECT
-                id, title, description, category, difficulty,
-                is_active, created_at
+                id,
+                title,
+                description,
+                category,
+                difficulty,
+                is_active,
+                created_at
             FROM quizzes
             WHERE id=%s
             """,
             (quiz_id,),
         )
+
         return cursor.fetchone()
+
     finally:
         connection.close()
 
@@ -1383,21 +1520,37 @@ def get_quiz(quiz_id):
 def get_quiz_questions(quiz_id, active_only=True):
     """Return MCQs without the correct answer."""
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         query = """
             SELECT
-                id, quiz_id, question, option_a, option_b, option_c, option_d,
-                points, is_active, created_at
+                id,
+                quiz_id,
+                question,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                points,
+                is_active,
+                created_at
             FROM quiz_questions
             WHERE quiz_id=%s
         """
+
         params = [quiz_id]
+
         if active_only:
             query += " AND is_active=1"
+
         query += " ORDER BY id"
+
         cursor.execute(query, params)
+
         return cursor.fetchall()
+
     finally:
         connection.close()
 
@@ -1414,18 +1567,25 @@ def submit_quiz_answer(
     automatically includes both CTF and quiz scores.
     """
     selected_answer = selected_answer.upper().strip()
+
     if selected_answer not in {"A", "B", "C", "D"}:
         raise ValueError("Selected answer must be A, B, C, or D.")
 
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         now = utc_now()
 
         question = cursor.execute(
             """
             SELECT
-                qq.id, qq.quiz_id, qq.correct_answer, qq.points, qq.is_active,
+                qq.id,
+                qq.quiz_id,
+                qq.correct_answer,
+                qq.points,
+                qq.is_active,
                 q.is_active AS quiz_is_active
             FROM quiz_questions qq
             JOIN quizzes q ON q.id=qq.quiz_id
@@ -1442,13 +1602,18 @@ def submit_quiz_answer(
 
         correct = selected_answer == question["correct_answer"]
 
-        # Every attempt is recorded. No answer key is stored in the attempt.
+        # Every attempt is recorded.
+        # No answer key is stored in the attempt.
         cursor.execute(
             """
             INSERT INTO quiz_attempts
             (
-                discord_id, question_id, selected_answer,
-                is_correct, points_awarded, submitted_at
+                discord_id,
+                question_id,
+                selected_answer,
+                is_correct,
+                points_awarded,
+                submitted_at
             )
             VALUES (%s, %s, %s, %s, 0, %s)
             RETURNING id
@@ -1461,10 +1626,12 @@ def submit_quiz_answer(
                 now,
             ),
         )
+
         attempt_id = cursor.fetchone()["id"]
 
         if not correct:
             connection.commit()
+
             return {
                 "status": "incorrect",
                 "question_id": question_id,
@@ -1476,7 +1643,13 @@ def submit_quiz_answer(
             cursor.execute(
                 """
                 INSERT INTO quiz_solves
-                (discord_id, question_id, quiz_id, points_awarded, solved_at)
+                (
+                    discord_id,
+                    question_id,
+                    quiz_id,
+                    points_awarded,
+                    solved_at
+                )
                 VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
@@ -1487,8 +1660,10 @@ def submit_quiz_answer(
                     now,
                 ),
             )
+
         except psycopg.IntegrityError:
             connection.commit()
+
             return {
                 "status": "already_solved",
                 "question_id": question_id,
@@ -1501,7 +1676,10 @@ def submit_quiz_answer(
             SET points_awarded=%s
             WHERE id=%s
             """,
-            (question["points"], attempt_id),
+            (
+                question["points"],
+                attempt_id,
+            ),
         )
 
         cursor.execute(
@@ -1510,28 +1688,38 @@ def submit_quiz_answer(
             SET points=points+%s
             WHERE discord_id=%s
             """,
-            (question["points"], discord_id),
+            (
+                question["points"],
+                discord_id,
+            ),
         )
 
         user = cursor.execute(
             """
-            SELECT points FROM users WHERE discord_id=%s
+            SELECT points
+            FROM users
+            WHERE discord_id=%s
             """,
             (discord_id,),
         ).fetchone()
 
         total_points = 0
         new_level = 1
+
         if user is not None:
             total_points = user["points"]
             new_level = get_level_from_xp(total_points)
+
             cursor.execute(
                 """
                 UPDATE users
                 SET level=%s
                 WHERE discord_id=%s
                 """,
-                (new_level, discord_id),
+                (
+                    new_level,
+                    discord_id,
+                ),
             )
 
         connection.commit()
@@ -1548,6 +1736,7 @@ def submit_quiz_answer(
     except Exception:
         connection.rollback()
         raise
+
     finally:
         connection.close()
 
@@ -1555,8 +1744,10 @@ def submit_quiz_answer(
 def get_quiz_score(discord_id, quiz_id):
     """Return points and solved-question count for one user in one quiz."""
     connection = get_connection()
+
     try:
         cursor = connection.cursor()
+
         cursor.execute(
             """
             SELECT
@@ -1565,9 +1756,14 @@ def get_quiz_score(discord_id, quiz_id):
             FROM quiz_solves
             WHERE discord_id=%s AND quiz_id=%s
             """,
-            (discord_id, quiz_id),
+            (
+                discord_id,
+                quiz_id,
+            ),
         )
+
         return cursor.fetchone()
+
     finally:
         connection.close()
 
