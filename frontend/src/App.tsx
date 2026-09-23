@@ -10,6 +10,7 @@ import EventDetails from "./pages/EventDetails";
 import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import Quizzes from "./pages/Quizzes";
+import Quiz from "./pages/quiz";
 
 function App() {
   return (
@@ -53,7 +54,7 @@ function App() {
           {/* Individual Quiz */}
           <Route
             path="/quiz/:id"
-            element={<Quizzes />}
+            element={<Quiz />}
           />
 
           {/* Leaderboard */}
