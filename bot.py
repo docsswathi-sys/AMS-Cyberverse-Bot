@@ -1,8 +1,14 @@
 import os
 
+from dotenv import load_dotenv
+
+# IMPORTANT:
+# Load .env BEFORE importing database_postgres because
+# database_postgres initializes the database during import.
+load_dotenv()
+
 import discord
 from discord import app_commands
-from dotenv import load_dotenv
 
 from database_postgres import (
     activate_event,
@@ -21,8 +27,9 @@ from database_postgres import (
     submit_challenge,
 )
 
-load_dotenv()
-
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -32,12 +39,21 @@ if not TOKEN:
 
 GUILD_ID = 1531533031704100955
 
+
+# ============================================================
+# DISCORD CLIENT
+# ============================================================
+
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
+
+# ============================================================
+# PROFILE / XP HELPERS
+# ============================================================
 
 def create_progress_bar(points: int, level: int) -> str:
     if level >= 100:
@@ -57,6 +73,10 @@ def create_progress_bar(points: int, level: int) -> str:
     return "█" * filled + "░" * empty
 
 
+# ============================================================
+# BOT READY
+# ============================================================
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
@@ -65,7 +85,10 @@ async def on_ready():
 
     try:
         synced = await tree.sync(guild=guild)
-        print(f"Synced {len(synced)} slash command(s) to AMS Cyberverse")
+        print(
+            f"Synced {len(synced)} slash command(s) "
+            f"to AMS Cyberverse"
+        )
     except discord.HTTPException as error:
         print(f"Failed to sync commands: {error}")
 
@@ -138,7 +161,8 @@ async def event(
 )
 async def events(interaction: discord.Interaction):
     await interaction.response.send_message(
-        "📋 Event listing is available through the AMS Cyberverse dashboard."
+        "📋 Event listing is available through the "
+        "AMS Cyberverse dashboard."
     )
 
 
@@ -435,6 +459,7 @@ async def profile(interaction: discord.Interaction):
         )
         return
 
+    # database_postgres uses dict_row.
     username = user["username"]
     display_name = user["display_name"]
     points = user["points"]
@@ -451,9 +476,15 @@ async def profile(interaction: discord.Interaction):
         xp_remaining = 0
     else:
         next_level_xp = get_xp_required(level + 1)
-        xp_remaining = max(0, next_level_xp - points)
+        xp_remaining = max(
+            0,
+            next_level_xp - points,
+        )
 
-    progress_bar = create_progress_bar(points, level)
+    progress_bar = create_progress_bar(
+        points,
+        level,
+    )
 
     embed = discord.Embed(
         title="🛡️ AMS CYBERVERSE",
@@ -580,11 +611,19 @@ async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError,
 ):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        message = "⛔ You do not have permission to use this command."
+    if isinstance(
+        error,
+        app_commands.errors.MissingPermissions,
+    ):
+        message = (
+            "⛔ You do not have permission to use this command."
+        )
     else:
         print(f"Command error: {error}")
-        message = "❌ Something went wrong while processing the command."
+        message = (
+            "❌ Something went wrong while processing "
+            "the command."
+        )
 
     if interaction.response.is_done():
         await interaction.followup.send(
