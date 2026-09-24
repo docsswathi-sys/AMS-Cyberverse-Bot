@@ -343,15 +343,20 @@ def discord_callback(
     # --------------------------------------------------------
 
     try:
+        basic_auth = base64.b64encode(
+            f"{DISCORD_CLIENT_ID}:{DISCORD_CLIENT_SECRET}".encode()
+        ).decode("ascii")
+
         token_data = _discord_request(
             f"{DISCORD_API_BASE}/oauth2/token",
             method="POST",
             data={
-                "client_id": DISCORD_CLIENT_ID,
-                "client_secret": DISCORD_CLIENT_SECRET,
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": DISCORD_REDIRECT_URI,
+            },
+            headers={
+                "Authorization": f"Basic {basic_auth}",
             },
         )
 
