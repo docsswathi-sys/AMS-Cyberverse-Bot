@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import secrets
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
@@ -205,13 +206,30 @@ def _discord_request(
         method=method,
     )
 
-    with urllib.request.urlopen(
-        request,
-        timeout=10,
-    ) as response:
-        return json.loads(
-            response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=10,
+        ) as response:
+            return json.loads(
+                response.read().decode("utf-8")
+            )
+
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode(
+            "utf-8",
+            errors="replace",
         )
+
+        raise RuntimeError(
+            f"Discord API request failed: "
+            f"HTTP {exc.code}: {error_body}"
+        ) from exc
+
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Discord API connection failed: {exc.reason}"
+        ) from exc
 
 
 # ============================================================
@@ -361,6 +379,11 @@ def discord_callback(
         )
 
     except Exception as exc:
+        print(
+            "[DISCORD OAUTH TOKEN EXCHANGE ERROR]",
+            repr(exc),
+        )
+
         raise HTTPException(
             status_code=502,
             detail="Failed to exchange Discord OAuth code.",
@@ -391,6 +414,11 @@ def discord_callback(
         )
 
     except Exception as exc:
+        print(
+            "[DISCORD OAUTH USER FETCH ERROR]",
+            repr(exc),
+        )
+
         raise HTTPException(
             status_code=502,
             detail="Failed to retrieve Discord user.",
