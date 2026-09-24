@@ -185,7 +185,10 @@ def _discord_request(
     built-in urllib so no additional dependency is required.
     """
 
-    request_headers = dict(headers or {})
+    request_headers = {
+        "User-Agent": "AMS-Cyberverse/1.0 (https://github.com/docsswathi-sys/AMS-Cyberverse-Bot)",
+        **(headers or {}),
+    }
 
     encoded_data = None
 
