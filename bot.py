@@ -73,12 +73,42 @@ def create_progress_bar(points: int, level: int) -> str:
 
 
 # ============================================================
+# ACTIVITY ENABLE BUTTON
+# ============================================================
+
+class EnableQuizView(discord.ui.View):
+    """Persistent button that launches the configured Discord Activity."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="ENABLE",
+        style=discord.ButtonStyle.success,
+        emoji="▶️",
+        custom_id="ams_cyberverse:enable_activity",
+    )
+    async def enable_activity(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await interaction.response.launch_activity()
+
+
+# ============================================================
 # BOT READY
 # ============================================================
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+
+    # Register the persistent ENABLE button once so it keeps working
+    # even after the bot reconnects/restarts.
+    if not getattr(bot, "_enable_view_registered", False):
+        bot.add_view(EnableQuizView())
+        bot._enable_view_registered = True
 
     guild = discord.Object(id=GUILD_ID)
 
@@ -226,8 +256,29 @@ async def activateevent(
         )
         return
 
+    embed = discord.Embed(
+        title="🛡️ AMS CYBERVERSE • CTF ENABLED",
+        description=(
+            f"**{event_data['name']}** is now live.\n\n"
+            "Press **ENABLE** to open the existing AMS Cyberverse "
+            "quiz/CTF interface directly inside Discord."
+        ),
+    )
+    embed.add_field(
+        name="EVENT",
+        value=event_data["name"],
+        inline=True,
+    )
+    embed.add_field(
+        name="STATUS",
+        value="🟢 ACTIVE",
+        inline=True,
+    )
+    embed.set_footer(text="AMS Cyberverse • Good luck, operator.")
+
     await interaction.response.send_message(
-        f"🟢 Event **{event_data['name']}** is now ACTIVE!"
+        embed=embed,
+        view=EnableQuizView(),
     )
 
 
