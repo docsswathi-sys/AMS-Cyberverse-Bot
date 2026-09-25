@@ -44,7 +44,7 @@ const navigation = [
 
 export default function Sidebar() {
   return (
-    <aside className="flex h-screen w-64 flex-col border-r border-white/10 bg-[#070b14]/95 px-4 py-5">
+    <aside className="hidden h-screen w-64 flex-col border-r border-white/10 bg-[#070b14]/95 px-4 py-5 md:flex">
       {/* Brand */}
       <div className="mb-8 flex items-center gap-3 px-2">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10">
