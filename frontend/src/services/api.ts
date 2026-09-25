@@ -23,6 +23,12 @@ async function request<T>(
     `${API_BASE_URL}${endpoint}`,
     {
       ...options,
+
+      // IMPORTANT:
+      // Send the Discord authentication session cookie
+      // to the backend.
+      credentials: "include",
+
       headers: {
         "Content-Type": "application/json",
         ...(options?.headers || {}),
@@ -79,6 +85,20 @@ export const api = {
 
   health(): Promise<HealthResponse> {
     return request<HealthResponse>("/health");
+  },
+
+  // =========================
+  // AUTHENTICATION
+  // =========================
+
+  authMe(): Promise<UserProfile> {
+    return request<UserProfile>("/auth/me");
+  },
+
+  logout(): Promise<void> {
+    return request<void>("/auth/logout", {
+      method: "POST",
+    });
   },
 
   // =========================

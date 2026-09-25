@@ -31,10 +31,6 @@ export default function CommandCenter() {
         setLoading(true);
         setError("");
 
-        const discordId = String(
-          import.meta.env.VITE_DEV_DISCORD_ID ?? ""
-        ).trim();
-
         const [activeEvent, challengeData, leaderboardData] =
           await Promise.all([
             api.activeEvent(),
@@ -46,18 +42,21 @@ export default function CommandCenter() {
         setChallenges(challengeData.challenges);
         setLeaderboard(leaderboardData.leaderboard);
 
-        if (discordId) {
-          try {
-            const user = await api.profile(discordId);
-            setProfile(user);
-          } catch {
-            setProfile(null);
-          }
+        // =========================
+        // AUTHENTICATED USER
+        // =========================
+
+        try {
+          const user = await api.authMe();
+          setProfile(user);
+        } catch {
+          setProfile(null);
         }
       } catch (err) {
         console.error(err);
+
         setError(
-          "Unable to connect to the AMS Cyberverse backend."
+          "Unable to connect to the AMS Cyberverse backend.",
         );
       } finally {
         setLoading(false);
@@ -72,6 +71,7 @@ export default function CommandCenter() {
       <div className="flex min-h-[70vh] items-center justify-center">
         <div className="flex items-center gap-3 text-cyan-300">
           <Activity className="h-5 w-5 animate-pulse" />
+
           <span className="text-sm tracking-wide">
             Initializing command center...
           </span>
@@ -86,12 +86,15 @@ export default function CommandCenter() {
         <div className="rounded-2xl border border-red-400/20 bg-red-400/5 p-8">
           <div className="mb-3 flex items-center gap-3">
             <ShieldCheck className="h-6 w-6 text-red-300" />
+
             <h1 className="text-lg font-semibold text-white">
               Backend connection failed
             </h1>
           </div>
 
-          <p className="text-sm text-slate-400">{error}</p>
+          <p className="text-sm text-slate-400">
+            {error}
+          </p>
 
           <p className="mt-4 text-xs text-slate-500">
             Verify that the FastAPI server is running on port 8000.
@@ -124,6 +127,7 @@ export default function CommandCenter() {
 
           <div className="flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/5 px-3 py-2">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
+
             <span className="text-xs font-medium text-emerald-300">
               Platform Online
             </span>
@@ -138,6 +142,7 @@ export default function CommandCenter() {
         <div className="relative">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-cyan-300">
             <Target className="h-4 w-4" />
+
             Active Operation
           </div>
 
@@ -192,6 +197,7 @@ export default function CommandCenter() {
 
         {/* Challenges */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+
           <div className="mb-5 flex items-center justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-400">
@@ -247,6 +253,7 @@ export default function CommandCenter() {
 
         {/* Leaderboard */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+
           <div className="mb-5">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-400">
               Competitive Intel
@@ -310,7 +317,9 @@ function StatCard({
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5 transition hover:border-cyan-400/20">
       <div className="flex items-center justify-between">
-        <span className="text-slate-500">{icon}</span>
+        <span className="text-slate-500">
+          {icon}
+        </span>
 
         <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
       </div>
