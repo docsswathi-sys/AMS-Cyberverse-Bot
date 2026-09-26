@@ -55,6 +55,7 @@ app.add_middleware(
         "https://preview-diploma-notified-specs.trycloudflare.com",
         "https://ams-cyberverse-bot.vercel.app",
     ],
+    allow_origin_regex=r"https://.*\.discordsays\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
