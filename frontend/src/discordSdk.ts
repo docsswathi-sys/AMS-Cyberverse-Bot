@@ -6,4 +6,6 @@ if (!clientId) {
   throw new Error("VITE_DISCORD_CLIENT_ID is not configured.");
 }
 
-export const discordSdk = new DiscordSDK(clientId);
+export function createDiscordSdk() {
+  return new DiscordSDK(clientId);
+}

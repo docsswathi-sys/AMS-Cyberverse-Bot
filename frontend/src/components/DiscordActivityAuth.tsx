@@ -1,10 +1,12 @@
 import { useEffect } from "react";
-import { discordSdk } from "../discordSdk";
+import { createDiscordSdk } from "../discordSdk";
 
 export default function DiscordActivityAuth() {
   useEffect(() => {
     async function setupDiscordActivity() {
       try {
+        const discordSdk = createDiscordSdk();
+
         await discordSdk.ready();
 
         const { code } = await discordSdk.commands.authorize({
