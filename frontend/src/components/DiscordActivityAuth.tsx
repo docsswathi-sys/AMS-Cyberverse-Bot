@@ -18,7 +18,8 @@ export default function DiscordActivityAuth() {
         });
 
           const response = await fetch(
-  `"/api/token"`,
+
+             "/.proxy/api/token",
   {
           method: "POST",
           credentials: "include",
