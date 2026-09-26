@@ -35,7 +35,26 @@ export default function DiscordActivityAuth() {
 
         console.log("Discord Activity authenticated");
       } catch (error) {
-        console.error("Discord Activity authentication failed:", error);
+        console.error(
+          "Discord Activity authentication failed:",
+          error
+        );
+
+        const message =
+          error instanceof Error ? error.message : String(error);
+
+        document.body.innerHTML = `
+          <div style="
+            min-height: 100vh;
+            background: #0b0f19;
+            color: #ff6b6b;
+            padding: 40px;
+            font-family: monospace;
+          ">
+            <h2>Discord Activity Authentication Error</h2>
+            <pre style="white-space: pre-wrap;">${message}</pre>
+          </div>
+        `;
       }
     }
 
