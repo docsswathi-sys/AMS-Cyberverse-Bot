@@ -17,7 +17,9 @@ export default function DiscordActivityAuth() {
           scope: ["identify"],
         });
 
-        const response = await fetch("/api/token", {
+          const response = await fetch(
+  `${import.meta.env.VITE_API_BASE_URL}/api/token`,
+  {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
