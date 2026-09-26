@@ -18,7 +18,7 @@ export default function DiscordActivityAuth() {
         });
 
           const response = await fetch(
-  `${import.meta.env.VITE_API_BASE_URL}/api/token`,
+  `"/api/token"`,
   {
           method: "POST",
           credentials: "include",
