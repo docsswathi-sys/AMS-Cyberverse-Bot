@@ -11,10 +11,12 @@ import Leaderboard from "./pages/Leaderboard";
 import Profile from "./pages/Profile";
 import Quizzes from "./pages/Quizzes";
 import Quiz from "./pages/quiz";
+import DiscordActivityAuth from "./components/DiscordActivityAuth";
 
 function App() {
   return (
     <BrowserRouter>
+    <DiscordActivityAuth />
       <AppShell>
         <Routes>
           {/* Command Center */}

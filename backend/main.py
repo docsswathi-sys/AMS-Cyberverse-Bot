@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from backend.schemas import (
@@ -189,6 +190,7 @@ def _discord_request(
         "User-Agent": "AMS-Cyberverse/1.0 (https://github.com/docsswathi-sys/AMS-Cyberverse-Bot)",
         **(headers or {}),
     }
+    
 
     encoded_data = None
 
@@ -512,6 +514,91 @@ def discord_callback(
     )
 
     return redirect_response
+
+
+@app.post("/api/token")
+def exchange_activity_token(payload: dict):
+    """Exchange a Discord Embedded App authorization code for a user token."""
+
+    _require_oauth_config()
+
+    code = str(payload.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing Discord authorization code.")
+
+    token_response = _discord_request(
+        f"{DISCORD_API_BASE}/oauth2/token",
+        method="POST",
+        data={
+            "client_id": DISCORD_CLIENT_ID,
+            "client_secret": DISCORD_CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": DISCORD_REDIRECT_URI,
+        },
+    )
+
+    access_token = token_response.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Discord did not return an access token.")
+
+    discord_user = _discord_request(
+        f"{DISCORD_API_BASE}/users/@me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    discord_id = int(discord_user["id"])
+    username = discord_user.get(
+        "username",
+        f"discord_{discord_id}",
+    )
+    display_name = (
+        discord_user.get("global_name")
+        or discord_user.get("username")
+        or f"discord_{discord_id}"
+    )
+
+    register_user(
+        discord_id=discord_id,
+        username=username,
+        display_name=display_name,
+    )
+
+    user = {
+        "discord_id": discord_id,
+        "username": username,
+        "display_name": display_name,
+    }
+
+    session_payload = {
+        "discord_id": discord_id,
+        "username": username,
+        "display_name": display_name,
+        "exp": int(
+            (
+                datetime.now(UTC)
+                + timedelta(days=7)
+            ).timestamp()
+        ),
+    }
+    session_token = _sign_session(session_payload)
+
+    response = JSONResponse(
+        {
+            "access_token": access_token,
+            "user": user,
+        }
+    )
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=7 * 24 * 60 * 60,
+        path="/",
+    )
+    return response
 
 
 @app.get("/auth/me")
