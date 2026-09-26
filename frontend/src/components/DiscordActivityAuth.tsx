@@ -21,6 +21,7 @@ export default function DiscordActivityAuth() {
   `${import.meta.env.VITE_API_BASE_URL}/api/token`,
   {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
