@@ -535,7 +535,7 @@ def exchange_activity_token(payload: dict):
             "client_secret": DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": DISCORD_REDIRECT_URI,
+            
         },
     )
 
