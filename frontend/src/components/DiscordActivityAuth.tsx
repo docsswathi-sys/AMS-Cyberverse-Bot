@@ -26,7 +26,23 @@ export default function DiscordActivityAuth() {
         });
 
         if (!response.ok) {
-          throw new Error("Discord token exchange failed.");
+          let detail = `HTTP ${response.status}`;
+
+          try {
+            const errorData = await response.json();
+
+            if (errorData.detail) {
+              detail = errorData.detail;
+            } else if (errorData.error) {
+              detail = errorData.error;
+            }
+          } catch {
+            // Keep the HTTP status if the response is not JSON.
+          }
+
+          throw new Error(
+            `Discord token exchange failed: ${detail}`
+          );
         }
 
         const { access_token } = await response.json();
